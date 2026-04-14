@@ -33,6 +33,6 @@ services:
       - key: ADMIN_USERNAME
         value: jsdansari
       - key: ADMIN_EMAIL
-        sync: false
+        value: preseverans@gmail.com
       - key: ADMIN_PASSWORD
         sync: false
