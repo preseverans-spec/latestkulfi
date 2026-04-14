@@ -9,7 +9,7 @@ services:
     name: indian-kulfi
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py create_default_superuser
     startCommand: gunicorn kulfi_config.wsgi --log-file -
     envVars:
       - key: DEBUG
@@ -30,3 +30,9 @@ services:
         value: True
       - key: CSRF_COOKIE_SECURE
         value: True
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
