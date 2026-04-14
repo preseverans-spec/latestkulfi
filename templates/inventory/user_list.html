@@ -1,0 +1,69 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Manage Users - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-users"></i> Manage Users</h1>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <a href="{% url 'add_user' %}" class="btn btn-success">
+            <i class="fas fa-plus"></i> Add New User
+        </a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-list"></i> User List</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Username</th>
+                    <th>Full Name</th>
+                    <th>Email</th>
+                    <th>Staff</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td><strong>{{ user.username }}</strong></td>
+                    <td>{{ user.get_full_name|default:'-' }}</td>
+                    <td>{{ user.email|default:'-' }}</td>
+                    <td>
+                        {% if user.is_staff %}
+                        <span class="badge bg-primary">Yes</span>
+                        {% else %}
+                        <span class="badge bg-secondary">No</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user.is_active %}
+                        <span class="badge bg-success">Active</span>
+                        {% else %}
+                        <span class="badge bg-danger">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'edit_user' user.id %}" class="btn btn-sm btn-warning">
+                            <i class="fas fa-edit"></i> Edit
+                        </a>
+                        <a href="{% url 'delete_user' user.id %}" class="btn btn-sm btn-danger">
+                            <i class="fas fa-trash"></i> Delete
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+
+

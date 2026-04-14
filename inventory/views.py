@@ -1,0 +1,3597 @@
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib import messages
+from django.db.models import Sum, Count, Q, F, DecimalField, OuterRef, Subquery, Case, When, IntegerField
+from django.db.models.functions import Coalesce
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.utils import timezone
+from django.http import JsonResponse, HttpResponse
+from django.conf import settings
+from datetime import datetime, timedelta, date
+from decimal import Decimal
+from urllib.parse import urlencode
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, login, logout
+from django.urls import reverse
+from django.views.decorators.http import require_POST
+from functools import wraps
+import csv
+import io
+import os
+import re
+from collections import defaultdict
+
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, DailySalesReport, WeeklyReport, ProfitReport
+from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, UserManagementForm
+
+
+# Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
+IK_QUICK_ENTRY_COST_BY_NAME = {
+    'malai': Decimal('24.17'),
+    'kesar badam': Decimal('24.17'),
+    'kesar pista': Decimal('24.17'),
+    'pista badam': Decimal('26.67'),
+    'chocolate': Decimal('26.67'),
+    'strawberry': Decimal('24.17'),
+    'mango malai': Decimal('24.17'),
+    'dry fruit': Decimal('26.67'),
+    'butterscotch': Decimal('26.67'),
+    'rose': Decimal('26.67'),
+    'blackcurrent': Decimal('26.67'),
+    'blackcurrant': Decimal('26.67'),
+    'caramel coffee': Decimal('26.67'),
+    'coconut': Decimal('24.17'),
+    'elaichi': Decimal('24.17'),
+    'litchi': Decimal('24.17'),
+    'kesar kajoor': Decimal('24.17'),
+    'guava': Decimal('26.67'),
+    'paan': Decimal('26.67'),
+}
+
+# Fixed Kulfi Corner costs used in Quick Inventory Entry when manufacturer is Kulfi Corner.
+KC_QUICK_ENTRY_COST_BY_NAME = {
+    'malai': Decimal('28.00'),
+    'kesar badam': Decimal('28.00'),
+    'kesar pista': Decimal('28.00'),
+    'pista badam': Decimal('28.00'),
+    'chocolate': Decimal('28.00'),
+    'strawberry': Decimal('26.00'),
+    'mango malai': Decimal('26.00'),
+    'dry fruit': Decimal('28.00'),
+    'butterscotch': Decimal('28.00'),
+    'rose': Decimal('28.00'),
+    'blackcurrent': Decimal('28.00'),
+    'blackcurrant': Decimal('28.00'),
+    'caramel coffee': Decimal('28.00'),
+    'coconut': Decimal('26.00'),
+    'elaichi': Decimal('26.00'),
+    'litchi': Decimal('26.00'),
+    'kesar kajoor': Decimal('26.00'),
+    'guava': Decimal('28.00'),
+    'paan': Decimal('28.00'),
+}
+
+# Cost price → manufacturer lookup (covers both IK and KC known price points).
+COST_PRICE_MANUFACTURER_MAP = {
+    Decimal('24.17'): 'Indian Kulfi',
+    Decimal('26.67'): 'Indian Kulfi',
+    Decimal('26.00'): 'Kulfi Corner',
+    Decimal('28.00'): 'Kulfi Corner',
+}
+
+
+def _identify_manufacturer_from_cost(cost_price):
+    """Return manufacturer name derived from cost price, defaulting to 'Kulfi Corner'."""
+    return COST_PRICE_MANUFACTURER_MAP.get(Decimal(str(cost_price)), 'Kulfi Corner')
+
+
+def _extract_manufacturer_from_notes(notes):
+    """Return the manufacturer name stamped in an inventory movement's notes, or None."""
+    if not notes:
+        return None
+    for segment in notes.split('|'):
+        segment = segment.strip()
+        if segment.startswith('Manufacturer:'):
+            value = segment[len('Manufacturer:'):].strip()
+            return value if value else None
+    return None
+
+
+def _get_report_logo_path():
+    """Return the first available local logo path suitable for ReportLab PDFs."""
+    candidates = [
+        os.path.join(settings.MEDIA_ROOT, 'logo', 'logo.png'),
+        os.path.join(settings.MEDIA_ROOT, 'logo', 'logo.jpg'),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def admin_only_view(view_func):
+    """Restrict view access to staff users only."""
+    def _wrapped_view(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return redirect('login')
+        if not request.user.is_staff:
+            messages.error(request, 'You can access only the Sales module with this account.')
+            return redirect('quick_sales_entry')
+        return view_func(request, *args, **kwargs)
+    return _wrapped_view
+
+# ==================== AUTHENTICATION ====================
+
+def login_view(request):
+    """User login view"""
+    if request.method == 'POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+        user = authenticate(request, username=username, password=password)
+        
+        if user is not None:
+            login(request, user)
+            if user.is_staff:
+                return redirect('dashboard')
+            return redirect('quick_sales_entry')
+        else:
+            messages.error(request, 'Invalid username or password.')
+    
+    return render(request, 'inventory/login.html')
+
+@login_required
+def logout_view(request):
+    """User logout view"""
+    logout(request)
+    return redirect('login')
+
+# ==================== DASHBOARD ====================
+
+@login_required
+def dashboard(request):
+    """Main dashboard showing today's sales, revenue, and low stock alerts"""
+    today = timezone.now().date()
+    
+    # Today's sales
+    today_sales = Sales.objects.filter(sale_date=today)
+    total_today_sales = today_sales.count()
+    total_today_revenue = today_sales.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    
+    # Gross profit from sales only.
+    total_today_profit = sum(sale.get_profit() for sale in today_sales)
+    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=today).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    total_today_net_profit = total_today_profit - total_today_operation_cost
+    
+    # Total stock across active products only
+    total_stock = Product.objects.filter(is_active=True).aggregate(
+        total=Coalesce(
+            Sum(
+                Case(
+                    When(current_stock__gt=0, then='current_stock'),
+                    default=0,
+                    output_field=IntegerField(),
+                )
+            ),
+            0,
+            output_field=DecimalField(),
+        )
+    )['total']
+
+    # Low stock alerts
+    low_stock_products = Product.objects.filter(
+        current_stock__lte=F('reorder_level'),
+        is_active=True
+    )
+    
+    # Weekly sales trend (last 7 days)
+    last_7_days_sales = []
+    for i in range(6, -1, -1):
+        date_temp = today - timedelta(days=i)
+        sales_count = Sales.objects.filter(sale_date=date_temp).count()
+        revenue = Sales.objects.filter(sale_date=date_temp).aggregate(
+            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+        )['total']
+        last_7_days_sales.append({
+            'date': date_temp.strftime('%m/%d'),
+            'sales': sales_count,
+            'revenue': float(revenue)
+        })
+    
+    # Top products (by sales count)
+    top_products = Product.objects.annotate(
+        sale_count=Count('sales')
+    ).order_by('-sale_count')[:5]
+    
+    context = {
+        'total_stock': total_stock,
+        'total_today_sales': total_today_sales,
+        'total_today_revenue': total_today_revenue,
+        'total_today_profit': total_today_profit,
+        'total_today_operation_cost': total_today_operation_cost,
+        'total_today_net_profit': total_today_net_profit,
+        'low_stock_count': low_stock_products.count(),
+        'low_stock_products': low_stock_products[:5],
+        'last_7_days_sales': last_7_days_sales,
+        'top_products': top_products,
+    }
+    
+    return render(request, 'inventory/dashboard.html', context)
+
+# ==================== INDIAN KULFI PRODUCTS MODULE ====================
+
+@login_required
+@permission_required('inventory.add_product', raise_exception=True)
+def add_product(request):
+    """Add new product to inventory"""
+    if request.method == 'POST':
+        form = ProductForm(request.POST)
+        if form.is_valid():
+            product = form.save()
+            messages.success(request, f'Product "{product.name}" added successfully!')
+            return redirect('product_list')
+    else:
+        form = ProductForm()
+    
+    context = {'form': form, 'title': 'Add New Product'}
+    return render(request, 'inventory/add_product.html', context)
+
+
+@login_required
+def product_list(request):
+    """List all products with management options"""
+    products = Product.objects.filter(is_active=True).order_by('sku')
+    
+    # Pagination
+    paginator = Paginator(products, 25)
+    page_number = request.GET.get('page', 1)
+    try:
+        paginated_products = paginator.page(page_number)
+    except PageNotAnInteger:
+        paginated_products = paginator.page(1)
+    except EmptyPage:
+        paginated_products = paginator.page(paginator.num_pages)
+    
+    context = {
+        'products': paginated_products,
+        'paginator': paginator,
+        'page_number': paginated_products.number,
+    }
+    return render(request, 'inventory/product_list.html', context)
+
+@login_required
+@permission_required('inventory.change_product', raise_exception=True)
+def edit_product(request, product_id):
+    """Edit existing product"""
+    product = get_object_or_404(Product, pk=product_id)
+    
+    if request.method == 'POST':
+        form = ProductForm(request.POST, instance=product)
+        if form.is_valid():
+            product = form.save()
+            messages.success(request, f'Product "{product.name}" updated successfully!')
+            return redirect('inventory_list')
+    else:
+        form = ProductForm(instance=product)
+    
+    context = {'form': form, 'product': product, 'title': f'Edit {product.name}'}
+    return render(request, 'inventory/add_product.html', context)
+
+@login_required
+@permission_required('inventory.delete_product', raise_exception=True)
+def delete_product(request, product_id):
+    """Soft delete a product by marking it inactive"""
+    product = get_object_or_404(Product, pk=product_id)
+
+    if request.method == 'POST':
+        product.is_active = False
+        product.save()
+        messages.success(request, f'Product "{product.name}" deleted successfully.')
+        return redirect('inventory_list')
+
+    context = {'product': product}
+    return render(request, 'inventory/confirm_delete_product.html', context)
+
+
+@login_required
+@permission_required('inventory.delete_product', raise_exception=True)
+def trash_list(request):
+    """List soft-deleted products (trash)"""
+    trashed_products = Product.objects.filter(is_active=False).order_by('name')
+    context = {'products': trashed_products}
+    return render(request, 'inventory/trash_list.html', context)
+
+
+@login_required
+@permission_required('inventory.change_product', raise_exception=True)
+def restore_product(request, product_id):
+    """Restore soft-deleted product"""
+    product = get_object_or_404(Product, pk=product_id, is_active=False)
+    product.is_active = True
+    product.save()
+    messages.success(request, f'Product "{product.name}" restored successfully.')
+    return redirect('inventory_trash')
+
+
+@login_required
+@permission_required('inventory.delete_product', raise_exception=True)
+def hard_delete_product(request, product_id):
+    """Permanently hard delete product"""
+    product = get_object_or_404(Product, pk=product_id, is_active=False)
+    product.delete()
+    messages.success(request, f'Product "{product.name}" permanently deleted.')
+    return redirect('inventory_trash')
+
+
+# ==================== INVENTORY MODULE ====================
+
+def calculate_stock_as_of_date(product, selected_date):
+    """Calculate product stock as of a specific date using inventory movements."""
+    last_adjustment = Inventory.objects.filter(
+        product=product,
+        movement_type='ADJUSTMENT',
+        movement_date__lte=selected_date
+    ).order_by('-movement_date', '-created_at').first()
+
+    if last_adjustment:
+        base_date = last_adjustment.movement_date
+        base_qty = last_adjustment.quantity
+        movement_sums = Inventory.objects.filter(
+            product=product,
+            movement_date__gt=base_date,
+            movement_date__lte=selected_date
+        ).aggregate(
+            in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
+            out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
+        )
+
+        # Sales reduce stock and must be included in historical stock reconstruction.
+        sales_total = Sales.objects.filter(
+            product=product,
+            sale_date__gt=base_date,
+            sale_date__lte=selected_date
+        ).aggregate(
+            total=Coalesce(Sum('quantity'), 0)
+        )['total']
+
+        calculated = base_qty + movement_sums['in_total'] - movement_sums['out_total'] - sales_total
+        return max(0, calculated)
+
+    movement_sums = Inventory.objects.filter(
+        product=product,
+        movement_date__lte=selected_date
+    ).aggregate(
+        in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
+        out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
+    )
+
+    sales_total = Sales.objects.filter(
+        product=product,
+        sale_date__lte=selected_date
+    ).aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
+
+    calculated = movement_sums['in_total'] - movement_sums['out_total'] - sales_total
+    return max(0, calculated)
+
+
+def get_stock_as_of_date_map(products, selected_date):
+    """Return a {product_id: stock_as_of_date} map for the provided products."""
+    product_ids = [product.id for product in products]
+    if not product_ids:
+        return {}
+
+    movement_totals_map = {
+        row['product_id']: row
+        for row in Inventory.objects.filter(
+            product_id__in=product_ids,
+            movement_date__lte=selected_date
+        ).values('product_id').annotate(
+            in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
+            out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
+        )
+    }
+
+    sales_totals_map = {
+        row['product_id']: row['total']
+        for row in Sales.objects.filter(
+            product_id__in=product_ids,
+            sale_date__lte=selected_date
+        ).values('product_id').annotate(
+            total=Coalesce(Sum('quantity'), 0)
+        )
+    }
+
+    last_adjustment_query = Inventory.objects.filter(
+        product=OuterRef('pk'),
+        movement_type='ADJUSTMENT',
+        movement_date__lte=selected_date
+    ).order_by('-movement_date', '-created_at')
+
+    last_adjustments_map = {}
+    for row in Product.objects.filter(id__in=product_ids).annotate(
+        last_adjustment_date=Subquery(last_adjustment_query.values('movement_date')[:1]),
+        last_adjustment_qty=Subquery(last_adjustment_query.values('quantity')[:1]),
+    ).values('id', 'last_adjustment_date', 'last_adjustment_qty'):
+        if row['last_adjustment_date'] is not None:
+            last_adjustments_map[row['id']] = (
+                row['last_adjustment_date'],
+                row['last_adjustment_qty'],
+            )
+
+    stock_map = {}
+    for product_id in product_ids:
+        if product_id in last_adjustments_map:
+            base_date, base_qty = last_adjustments_map[product_id]
+            movement_after = Inventory.objects.filter(
+                product_id=product_id,
+                movement_date__gt=base_date,
+                movement_date__lte=selected_date
+            ).aggregate(
+                in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
+                out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
+            )
+            sales_after = Sales.objects.filter(
+                product_id=product_id,
+                sale_date__gt=base_date,
+                sale_date__lte=selected_date
+            ).aggregate(
+                total=Coalesce(Sum('quantity'), 0)
+            )['total']
+            calculated = base_qty + movement_after['in_total'] - movement_after['out_total'] - sales_after
+            stock_map[product_id] = max(0, calculated)
+            continue
+
+        movement_totals = movement_totals_map.get(product_id, {'in_total': 0, 'out_total': 0})
+        sales_total = sales_totals_map.get(product_id, 0)
+        calculated = movement_totals['in_total'] - movement_totals['out_total'] - sales_total
+        stock_map[product_id] = max(0, calculated)
+
+    return stock_map
+
+
+@login_required
+def inventory_list(request):
+    """View inventory with current or date-based stock levels."""
+    clear_filters = request.GET.get('clear') == '1'
+    reset_filters = request.GET.get('reset') == '1'
+    show_results = not clear_filters
+
+    if clear_filters or reset_filters:
+        search_query = ''
+        category_filter = []
+        status_filter = ''
+        movement_filter = ''
+        as_of_date = ''
+        sort_by = 'sku'
+        per_page = 50
+
+        request.session.pop('inventory_search_query', None)
+        request.session.pop('inventory_category_filter', None)
+        request.session.pop('inventory_status_filter', None)
+        request.session.pop('inventory_movement_filter', None)
+        request.session.pop('inventory_as_of_date', None)
+        request.session.pop('inventory_sort_by', None)
+        request.session.pop('inventory_per_page', None)
+    else:
+        search_query = request.GET.get('search', request.session.get('inventory_search_query', ''))
+        category_filter = request.GET.getlist('category') or request.session.get('inventory_category_filter', [])
+        status_filter = request.GET.get('status', request.session.get('inventory_status_filter', ''))
+        movement_filter = request.GET.get('movement_type', request.session.get('inventory_movement_filter', ''))
+        as_of_date = request.GET.get('as_of_date', request.session.get('inventory_as_of_date', ''))
+        sort_by = request.GET.get('sort', request.session.get('inventory_sort_by', 'sku'))
+        per_page = int(request.GET.get('per_page', request.session.get('inventory_per_page', 50)))
+
+    request.session['inventory_search_query'] = search_query
+    request.session['inventory_category_filter'] = category_filter
+    request.session['inventory_status_filter'] = status_filter
+    request.session['inventory_movement_filter'] = movement_filter
+    request.session['inventory_as_of_date'] = as_of_date
+    request.session['inventory_sort_by'] = sort_by
+    request.session['inventory_per_page'] = per_page
+
+    selected_date = None
+    if as_of_date:
+        try:
+            selected_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+            as_of_date = selected_date.isoformat()
+
+    generated_at = timezone.localtime()
+    if selected_date:
+        stock_as_of_label = f"{selected_date.strftime('%Y-%m-%d')} 23:59:59"
+    else:
+        stock_as_of_label = generated_at.strftime('%Y-%m-%d %H:%M:%S')
+
+    products = Product.objects.filter(is_active=True)
+
+    if search_query:
+        products = products.filter(
+            Q(name__icontains=search_query) |
+            Q(sku__icontains=search_query) |
+            Q(category__icontains=search_query)
+        )
+
+    if category_filter:
+        products = products.filter(category__in=category_filter)
+
+    categories = Product.objects.filter(is_active=True).values_list('category', flat=True).distinct().order_by('category')
+
+    sort_options = {
+        'name': 'name',
+        '-name': '-name',
+        'sku': 'sku',
+        '-sku': '-sku',
+        'current_stock': 'display_stock',
+        '-current_stock': '-display_stock',
+        'reorder_level': 'reorder_level',
+        '-reorder_level': '-reorder_level',
+        'cost_price': 'cost_price',
+        '-cost_price': '-cost_price',
+        'selling_price': 'selling_price',
+        '-selling_price': '-selling_price',
+    }
+
+    products_ordered = list(products.order_by('sku'))
+    stock_map = get_stock_as_of_date_map(products_ordered, selected_date) if selected_date else {}
+
+    # Ensure all products have display_stock set
+    for product in products_ordered:
+        if selected_date:
+            product.display_stock = max(0, stock_map.get(product.id, 0))
+        else:
+            product.display_stock = max(0, product.current_stock)
+
+    movement_product_ids = set()
+    if movement_filter:
+        movement_query = Inventory.objects.filter(
+            product_id__in=[product.id for product in products_ordered],
+            movement_type=movement_filter
+        )
+        if selected_date:
+            movement_query = movement_query.filter(movement_date=selected_date)
+        movement_product_ids = set(
+            movement_query.values_list('product_id', flat=True).distinct()
+        )
+
+    product_list = []
+    for product in products_ordered:
+        display_stock = product.display_stock
+
+        movement_exists = True
+        if movement_filter:
+            movement_exists = product.id in movement_product_ids
+
+        if not movement_exists:
+            continue
+
+        if status_filter == 'low_stock' and display_stock > product.reorder_level:
+            continue
+        if status_filter == 'in_stock' and display_stock <= product.reorder_level:
+            continue
+
+        product_list.append(product)
+
+    sort_key = sort_options.get(sort_by, 'sku')
+    reverse_sort = sort_key.startswith('-')
+    sort_attr = sort_key[1:] if reverse_sort else sort_key
+    product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+
+    # Calculate totals from source data with proper display_stock
+    # Recalculate to ensure accuracy with filtered product_list
+    total_stock = 0
+    total_cost_price = Decimal('0.0')
+    total_sales_price = Decimal('0.0')
+    
+    for product in product_list:
+        # Use display_stock which is the calculated stock for the selected date
+        qty = product.display_stock if hasattr(product, 'display_stock') else (
+            stock_map.get(product.id, 0) if selected_date else product.current_stock
+        )
+        total_stock += qty
+        total_cost_price += Decimal(qty) * product.cost_price
+        total_sales_price += Decimal(qty) * product.selling_price
+
+    paginator = Paginator(product_list, per_page)
+    page_number = request.GET.get('page', 1)
+    try:
+        paginated_products = paginator.page(page_number)
+    except PageNotAnInteger:
+        paginated_products = paginator.page(1)
+    except EmptyPage:
+        paginated_products = paginator.page(paginator.num_pages)
+
+    context = {
+        'products': paginated_products,
+        'search_query': search_query,
+        'category_filter': category_filter,
+        'status_filter': status_filter,
+        'movement_filter': movement_filter,
+        'as_of_date': as_of_date,
+        'sort_by': sort_by,
+        'per_page': per_page,
+        'sort_options': sort_options,
+        'categories': categories,
+        'paginator': paginator,
+        'page_number': paginated_products.number,
+        'total_stock': total_stock,
+        'total_cost_price': total_cost_price,
+        'total_sales_price': total_sales_price,
+        'selected_date': selected_date,
+        'stock_as_of_label': stock_as_of_label,
+        'generated_at': generated_at,
+        'show_results': show_results,
+    }
+
+    return render(request, 'inventory/inventory_list.html', context)
+
+@login_required
+def quick_inventory_entry(request):
+    """Quick inventory entry with batch product movements"""
+    if request.method == 'POST':
+        selected_manufacturer = (request.POST.get('selected_manufacturer') or '').strip()
+        products = request.POST.getlist('product[]')
+        movement_types = request.POST.getlist('movement_type[]')
+        adjustment_modes = request.POST.getlist('adjustment_mode[]')
+        quantities = request.POST.getlist('quantity[]')
+        quantity_units = request.POST.getlist('quantity_unit[]')
+        cost_prices = request.POST.getlist('cost_price[]')
+        movement_dates = request.POST.getlist('movement_date[]')
+
+        created_count = 0
+        errors = []
+        product_count = 0
+        total_packs = 0
+        total_effective_qty = 0
+        overall_total_value = Decimal('0.0')
+        recorded_items = []
+
+        for i, product_id in enumerate(products):
+            if not product_id:
+                continue
+
+            try:
+                product = Product.objects.get(pk=product_id, is_active=True)
+            except Product.DoesNotExist:
+                errors.append(f"Product ID {product_id} not found")
+                continue
+
+            try:
+                qty_str = quantities[i].strip() if i < len(quantities) else ''
+                quantity = int(qty_str) if qty_str else 0
+            except (ValueError, TypeError):
+                errors.append(f"{product.name}: Invalid quantity")
+                continue
+
+            if quantity <= 0:
+                continue
+
+            movement_type = movement_types[i] if i < len(movement_types) else 'IN'
+            adjustment_mode = adjustment_modes[i] if i < len(adjustment_modes) else 'PLUS'
+            quantity_unit = quantity_units[i] if i < len(quantity_units) else 'NOS'
+            cost_price = Decimal(cost_prices[i]) if i < len(cost_prices) and cost_prices[i] else Decimal('0.0')
+
+            # Enforce manufacturer-specific cost maps so correct prices are always applied.
+            normalized_name = normalize_sales_product_name(product.name).lower()
+            if selected_manufacturer == 'Indian Kulfi':
+                mapped_cost = IK_QUICK_ENTRY_COST_BY_NAME.get(normalized_name)
+                if mapped_cost is not None:
+                    cost_price = mapped_cost
+            elif selected_manufacturer == 'Kulfi Corner':
+                mapped_cost = KC_QUICK_ENTRY_COST_BY_NAME.get(normalized_name)
+                if mapped_cost is not None:
+                    cost_price = mapped_cost
+
+            # Convert to actual units: pack = 6 units
+            if quantity_unit == 'PACK':
+                effective_quantity = quantity * 6
+            else:
+                effective_quantity = quantity
+
+            movement_date_str = movement_dates[i] if i < len(movement_dates) else ''
+            
+            movement_value = Decimal(effective_quantity) * cost_price
+
+            if movement_date_str:
+                try:
+                    movement_date = datetime.strptime(movement_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    movement_date = timezone.now().date()
+            else:
+                movement_date = timezone.now().date()
+
+            # Stock operations
+            if movement_type == 'OUT' and effective_quantity > product.current_stock:
+                errors.append(f"{product.name}: Insufficient stock for outbound movement. Available {product.current_stock}, requested {effective_quantity}")
+                continue
+
+            inventory_quantity = effective_quantity
+            if movement_type == 'IN':
+                product.current_stock += effective_quantity
+            elif movement_type == 'OUT':
+                product.current_stock -= effective_quantity
+            elif movement_type == 'ADJUSTMENT':
+                stock_on_movement_date = calculate_stock_as_of_date(product, movement_date)
+                if adjustment_mode == 'MINUS':
+                    if effective_quantity > stock_on_movement_date:
+                        errors.append(f"{product.name}: Cannot subtract {effective_quantity} on {movement_date}. Available stock on that date is {stock_on_movement_date}")
+                        continue
+                    adjusted_stock_on_date = stock_on_movement_date - effective_quantity
+                    product.current_stock -= effective_quantity
+                    adjustment_sign = '-'
+                else:
+                    adjusted_stock_on_date = stock_on_movement_date + effective_quantity
+                    product.current_stock += effective_quantity
+                    adjustment_sign = '+'
+
+                # Keep ADJUSTMENT quantity as absolute stock snapshot after applying +/- change on movement_date.
+                inventory_quantity = adjusted_stock_on_date
+            else:
+                errors.append(f"{product.name}: Unsupported movement type {movement_type}")
+                continue
+
+            # Persist inventory movement and product stock.
+            # Stamp the manufacturer in notes so stock reports can identify it reliably.
+            if selected_manufacturer:
+                manufacturer_stamp = f'Manufacturer: {selected_manufacturer}'
+            else:
+                manufacturer_stamp = ''
+            if movement_type == 'ADJUSTMENT':
+                movement_notes = f'{manufacturer_stamp} | Adjustment mode: {adjustment_sign}{effective_quantity}' if manufacturer_stamp else f'Adjustment mode: {adjustment_sign}{effective_quantity}'
+            else:
+                movement_notes = manufacturer_stamp
+
+            Inventory.objects.create(
+                product=product,
+                movement_type=movement_type,
+                quantity=inventory_quantity,
+                unit_cost=cost_price,
+                movement_date=movement_date,
+                reference_document=f'Quick entry {movement_date}',
+                notes=movement_notes,
+                created_by=request.user
+            )
+            product.current_stock = max(0, product.current_stock)
+            product.save()
+            recorded_items.append({
+                'name': product.name,
+                'sku': product.sku,
+                'movement_type': movement_type,
+                'quantity': quantity,
+                'unit': quantity_unit,
+                'effective_qty': effective_quantity,
+                'adjustment_mode': adjustment_mode,
+                'cost_price': str(cost_price),
+                'total_value': str(movement_value),
+                'movement_date': str(movement_date),
+            })
+
+            # Success-only summary totals for the post-submit green card.
+            product_count += 1
+            if quantity_unit == 'PACK':
+                total_packs += quantity
+            total_effective_qty += effective_quantity
+            overall_total_value += movement_value
+            created_count += 1
+
+        if created_count > 0:
+            messages.success(request, f'Successfully recorded {created_count} movement(s).')
+
+        for error in errors:
+            messages.warning(request, error)
+
+        if created_count == 0 and not errors:
+            messages.info(request, 'No inventory movements were recorded.')
+
+        request.session['recorded_items'] = recorded_items
+        request.session['recorded_summary'] = {
+            'product_count': product_count,
+            'total_packs': total_packs,
+            'total_effective_qty': total_effective_qty,
+            'overall_total_value': str(overall_total_value),
+            'created_count': created_count,
+        }
+        return redirect('quick_inventory_entry')
+
+    selected_movement_date_raw = request.GET.get('movement_date', '')
+    selected_manufacturer = request.GET.get('manufacturer', '')
+    selected_movement_date = None
+    if selected_movement_date_raw:
+        try:
+            selected_movement_date = datetime.strptime(selected_movement_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_movement_date = None
+
+    # Build product groups: one entry per normalized flavor name, pairing IK and KC variants
+    all_products = list(Product.objects.filter(is_active=True).order_by('sku'))
+    stock_map = (
+        get_stock_as_of_date_map(all_products, selected_movement_date)
+        if selected_movement_date else
+        {product.id: product.current_stock for product in all_products}
+    )
+    product_groups_map = {}
+    for product in all_products:
+        norm_name = normalize_sales_product_name(product.name)
+        norm_key = norm_name.lower()
+        if norm_key not in product_groups_map:
+            product_groups_map[norm_key] = {
+                'name': norm_name,
+                'ik': None,
+                'kc': None,
+                'ik_stock': 0,
+                'kc_stock': 0,
+                'ik_cost_override': IK_QUICK_ENTRY_COST_BY_NAME.get(norm_key),
+            }
+        category = (product.category or '').strip().lower()
+        if category == 'kulfi corner':
+            product_groups_map[norm_key]['kc'] = product
+            product_groups_map[norm_key]['kc_stock'] = max(0, stock_map.get(product.id, 0))
+        else:
+            product_groups_map[norm_key]['ik'] = product
+            product_groups_map[norm_key]['ik_stock'] = max(0, stock_map.get(product.id, 0))
+
+    for group in product_groups_map.values():
+        # If only KC product exists for a flavor, reuse it for IK selection.
+        # This supports shared inventory with manufacturer-specific costing.
+        if group['ik'] is None and group['kc'] is not None:
+            group['ik'] = group['kc']
+            group['ik_stock'] = group['kc_stock']
+
+    product_groups = sorted(
+        product_groups_map.values(),
+        key=lambda g: min(
+            g['ik'].sku if g['ik'] else 'ZZZ999',
+            g['kc'].sku if g['kc'] else 'ZZZ999',
+        )
+    )
+
+    context = {
+        'product_groups': product_groups,
+        'today': timezone.now().date(),
+        'selected_movement_date': selected_movement_date,
+        'selected_manufacturer': selected_manufacturer,
+        'recorded_items': request.session.pop('recorded_items', None),
+        'recorded_summary': request.session.pop('recorded_summary', None),
+    }
+    return render(request, 'inventory/quick_inventory_entry.html', context)
+
+
+@login_required
+@permission_required('inventory.change_product', raise_exception=True)
+def clear_stock(request, product_id):
+    """Clear stock level for a product"""
+    product = get_object_or_404(Product, pk=product_id, is_active=True)
+
+    if request.method == 'POST':
+        old_stock = product.current_stock
+        if old_stock != 0:
+            product.current_stock = 0
+            product.save()
+
+            Inventory.objects.create(
+                product=product,
+                movement_type='ADJUSTMENT',
+                quantity=0,
+                reference_document=f'Clear stock from {old_stock}',
+                notes='Stock cleared via quick action',
+                created_by=request.user
+            )
+            messages.success(request, f'Stock for {product.name} cleared to 0.')
+        else:
+            messages.info(request, f'Stock for {product.name} is already 0.')
+
+        return redirect('inventory_list')
+
+    context = {'product': product}
+    return render(request, 'inventory/confirm_clear_stock.html', context)
+
+@login_required
+def inventory_history(request, product_id):
+    """View inventory movement history for a product"""
+    product = get_object_or_404(Product, pk=product_id)
+    movements = Inventory.objects.filter(product=product)
+    
+    context = {
+        'product': product,
+        'movements': movements,
+    }
+    
+    return render(request, 'inventory/inventory_history.html', context)
+
+@login_required
+def inventory_date_history(request):
+    """View all inventory movements filtered by a date range."""
+    start_date_param = request.GET.get('start_date')
+    end_date_param = request.GET.get('end_date')
+
+    if not start_date_param or not end_date_param:
+        # No complete date range submitted yet — show empty form
+        return render(request, 'inventory/inventory_date_history.html', {
+            'date_selected': False,
+            'selected_start_date': '',
+            'selected_end_date': '',
+        })
+
+    try:
+        start_date = datetime.strptime(start_date_param, '%Y-%m-%d').date()
+    except ValueError:
+        start_date = timezone.now().date()
+
+    try:
+        end_date = datetime.strptime(end_date_param, '%Y-%m-%d').date()
+    except ValueError:
+        end_date = timezone.now().date()
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+
+    # Get all movements for the selected date range
+    daily_movements = Inventory.objects.filter(
+        movement_date__gte=start_date,
+        movement_date__lte=end_date
+    ).select_related('product', 'created_by').order_by('movement_date', 'product__sku', '-created_at')
+
+    # Calculate stock summary
+    total_in = daily_movements.filter(movement_type='IN').aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
+    total_out = daily_movements.filter(movement_type='OUT').aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
+    total_adjustment = daily_movements.filter(movement_type='ADJUSTMENT').aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
+
+    # Stock as of end date (Snapshot based on movements)
+    stock_snapshot = []
+    products = list(Product.objects.filter(is_active=True).order_by('sku'))
+    stock_map = get_stock_as_of_date_map(products, end_date)
+
+    for product in products:
+        stock = stock_map.get(product.id, 0)
+        stock_amount = Decimal(stock) * product.cost_price
+        stock_snapshot.append({
+            'product': product,
+            'stock': stock,
+            'stock_amount': stock_amount,
+        })
+
+    total_stock_as_of_date = sum(item['stock'] for item in stock_snapshot)
+    total_stock_amount_as_of_date = sum(
+        (item['stock_amount'] for item in stock_snapshot),
+        Decimal('0.0')
+    )
+
+    context = {
+        'date_selected': True,
+        'selected_start_date': start_date,
+        'selected_end_date': end_date,
+        'daily_movements': daily_movements,
+        'total_movements': daily_movements.count(),
+        'total_in': total_in,
+        'total_out': total_out,
+        'total_adjustment': total_adjustment,
+        'stock_snapshot': stock_snapshot,
+        'total_stock_as_of_date': total_stock_as_of_date,
+        'total_stock_amount_as_of_date': total_stock_amount_as_of_date,
+    }
+
+    return render(request, 'inventory/inventory_date_history.html', context)
+
+# ==================== SALES MODULE ====================
+
+def normalize_sales_product_name(name):
+    """Normalize product name for manufacturer-agnostic sales grouping."""
+    cleaned_name = re.sub(r'\s+', ' ', (name or '').strip())
+    # Remove leading manufacturer tokens used in product names (e.g., 'IK Malai', 'KC Malai').
+    cleaned_name = re.sub(r'^(IK|KC)\s*[-:]*\s*', '', cleaned_name, flags=re.IGNORECASE)
+    cleaned_name = re.sub(r'\s*\((IK|KC)\)$', '', cleaned_name, flags=re.IGNORECASE)
+    return cleaned_name.strip()
+
+
+def group_active_products_by_name():
+    """Return active products grouped by normalized product name key."""
+    grouped = defaultdict(list)
+    for product in Product.objects.filter(is_active=True):
+        key = normalize_sales_product_name(product.name).lower()
+        grouped[key].append(product)
+    return grouped
+
+
+def build_sales_groups(sales_qs, include_date=False):
+    """Aggregate sales rows by normalized product name (and date if requested)."""
+    grouped = {}
+    for sale in sales_qs:
+        display_name = normalize_sales_product_name(sale.product.name)
+        group_key = (sale.sale_date, display_name) if include_date else (display_name,)
+
+        if group_key not in grouped:
+            grouped[group_key] = {
+                'sale_date': sale.sale_date,
+                'product_name': display_name,
+                'quantity': 0,
+                'total_price': Decimal('0.0'),
+                'recorded_by': set(),
+                'notes': [],
+                'sort_sku': sale.product.sku,
+            }
+
+        grouped[group_key]['quantity'] += sale.quantity
+        grouped[group_key]['total_price'] += sale.total_price
+        grouped[group_key]['recorded_by'].add(
+            sale.recorded_by.get_full_name() or sale.recorded_by.username
+        )
+        if sale.notes:
+            grouped[group_key]['notes'].append(sale.notes)
+
+        # Keep lowest SKU in each group to support SKU-based ordering.
+        current_sort_sku = grouped[group_key].get('sort_sku')
+        if not current_sort_sku or sale.product.sku < current_sort_sku:
+            grouped[group_key]['sort_sku'] = sale.product.sku
+
+    grouped_rows = []
+    for _, row in grouped.items():
+        row['unit_price'] = (
+            row['total_price'] / row['quantity'] if row['quantity'] else Decimal('0.0')
+        )
+        row['recorded_by'] = ', '.join(sorted(row['recorded_by'])) if row['recorded_by'] else '-'
+        row['notes'] = ' | '.join(row['notes']) if row['notes'] else '-'
+        grouped_rows.append(row)
+
+    if include_date:
+        grouped_rows.sort(key=lambda item: (item['sale_date'], item['sort_sku'], item['product_name']))
+    else:
+        grouped_rows.sort(key=lambda item: (item['sort_sku'], item['product_name']))
+    return grouped_rows
+
+
+def build_grouped_products_for_sales_date(selected_sales_date):
+    """Build grouped product rows with combined stock and average unit price for a date."""
+    grouped_products = defaultdict(list)
+    for _, products_in_group in group_active_products_by_name().items():
+        if products_in_group:
+            group_name = normalize_sales_product_name(products_in_group[0].name)
+            grouped_products[group_name] = products_in_group
+
+    grouped_products_for_form = []
+    grouped_items = sorted(
+        grouped_products.items(),
+        key=lambda item: min((product.sku for product in item[1]), default='ZZZ999')
+    )
+    for group_name, products_in_group in grouped_items:
+        stock_map = get_stock_as_of_date_map(products_in_group, selected_sales_date)
+        total_stock = max(0, sum(stock_map.get(item.id, 0) for item in products_in_group))
+        avg_price = (
+            sum(item.selling_price for item in products_in_group) / len(products_in_group)
+            if products_in_group else Decimal('0.0')
+        )
+        grouped_products_for_form.append({
+            'key': group_name.lower(),
+            'name': group_name,
+            'stock': total_stock,
+            'avg_price': avg_price,
+        })
+
+    return grouped_products_for_form
+
+
+@login_required
+def sales_stock_taken_entry(request):
+    """Capture stock taken by salespeople without reducing inventory stock."""
+    if not request.user.is_staff:
+        messages.error(request, 'Use Daily Sales Sheet for sales stock and sales updates.')
+        return redirect('quick_sales_entry')
+
+    selected_sales_date_raw = request.POST.get('sales_date') or request.GET.get('sales_date') or request.GET.get('date')
+    if selected_sales_date_raw:
+        try:
+            selected_sales_date = datetime.strptime(selected_sales_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_sales_date = timezone.now().date()
+    else:
+        selected_sales_date = timezone.now().date()
+
+    grouped_products_for_form = build_grouped_products_for_sales_date(selected_sales_date)
+    products_by_key = {item['key']: item for item in grouped_products_for_form}
+
+    target_user = request.user
+    selected_salesperson_id = ''
+    salespeople = User.objects.filter(is_staff=False, is_active=True).order_by('first_name', 'username')
+    if request.user.is_staff:
+        selected_salesperson_id = request.POST.get('salesperson') or request.GET.get('salesperson', '')
+        if selected_salesperson_id:
+            try:
+                target_user = User.objects.get(pk=int(selected_salesperson_id), is_active=True)
+            except (User.DoesNotExist, ValueError, TypeError):
+                target_user = request.user
+                selected_salesperson_id = ''
+                messages.warning(request, 'Selected salesperson not found. Showing your own records.')
+
+    if request.method == 'POST':
+        product_keys = request.POST.getlist('product_key[]')
+        stock_taken_counts = request.POST.getlist('stock_taken_count[]')
+
+        saved_count = 0
+        removed_count = 0
+        errors = []
+
+        existing_entries = {
+            item.product_key: item
+            for item in SalesStockTaken.objects.filter(
+                salesperson=target_user,
+                sales_date=selected_sales_date,
+            )
+        }
+
+        for i, product_key in enumerate(product_keys):
+            if not product_key:
+                continue
+
+            product_info = products_by_key.get(product_key)
+            if not product_info:
+                errors.append(f'Row {i + 1}: Product group not found.')
+                continue
+
+            raw_count = stock_taken_counts[i].strip() if i < len(stock_taken_counts) else '0'
+            if not raw_count:
+                raw_count = '0'
+
+            try:
+                stock_taken_count = int(raw_count)
+            except (TypeError, ValueError):
+                errors.append(f"{product_info['name']}: Invalid stock taken count")
+                continue
+
+            if stock_taken_count < 0:
+                errors.append(f"{product_info['name']}: Stock taken count cannot be negative")
+                continue
+
+            if stock_taken_count > 0:
+                SalesStockTaken.objects.update_or_create(
+                    salesperson=target_user,
+                    sales_date=selected_sales_date,
+                    product_key=product_key,
+                    defaults={
+                        'product_name': product_info['name'],
+                        'avg_unit_price': product_info['avg_price'],
+                        'combined_stock': product_info['stock'],
+                        'stock_taken_count': stock_taken_count,
+                    },
+                )
+                saved_count += 1
+            else:
+                existing_entry = existing_entries.get(product_key)
+                if existing_entry:
+                    existing_entry.delete()
+                    removed_count += 1
+
+        if saved_count > 0:
+            messages.success(request, f'Saved stock taken records for {saved_count} product(s).')
+        if removed_count > 0:
+            messages.info(request, f'Removed {removed_count} empty stock taken record(s).')
+        for error in errors:
+            messages.warning(request, error)
+
+        if saved_count == 0 and removed_count == 0 and not errors:
+            messages.info(request, 'No stock taken records were updated.')
+
+        redirect_url = f"{reverse('sales_stock_taken_entry')}?sales_date={selected_sales_date.isoformat()}"
+        if request.user.is_staff and target_user.id != request.user.id:
+            redirect_url = f"{redirect_url}&salesperson={target_user.id}"
+        return redirect(redirect_url)
+
+    existing_entries = {
+        item.product_key: item
+        for item in SalesStockTaken.objects.filter(
+            salesperson=target_user,
+            sales_date=selected_sales_date,
+        )
+    }
+
+    admin_day_entries = None
+    if request.user.is_staff:
+        admin_day_entries = SalesStockTaken.objects.filter(
+            sales_date=selected_sales_date,
+        ).select_related('salesperson').order_by('salesperson__username', 'product_name')
+
+    total_taken_count = 0
+    total_estimated_value = Decimal('0.0')
+    for product in grouped_products_for_form:
+        existing = existing_entries.get(product['key'])
+        if existing:
+            stock_taken_count = existing.stock_taken_count
+        else:
+            stock_taken_count = 0
+        product['stock_taken_count'] = stock_taken_count
+        product['estimated_total'] = product['avg_price'] * stock_taken_count
+        total_taken_count += stock_taken_count
+        total_estimated_value += product['estimated_total']
+
+    context = {
+        'products': grouped_products_for_form,
+        'selected_sales_date': selected_sales_date,
+        'today': timezone.now().date(),
+        'total_taken_count': total_taken_count,
+        'total_estimated_value': total_estimated_value,
+        'target_user': target_user,
+        'salespeople': salespeople,
+        'selected_salesperson_id': selected_salesperson_id,
+        'admin_day_entries': admin_day_entries,
+    }
+    return render(request, 'inventory/sales_stock_taken_entry.html', context)
+
+@login_required
+def quick_sales_entry(request):
+    """Daily sales sheet by product name (manufacturer-agnostic)."""
+    def get_sales_groups():
+        """Return grouped active products across all categories."""
+        return group_active_products_by_name()
+
+    if request.method == 'POST':
+        action = request.POST.get('action', 'record_sales')
+
+        if request.user.is_staff and action == 'save_stock_taken':
+            messages.error(request, 'Stock taken entries are only available for sales users.')
+            return redirect('quick_sales_entry')
+
+        # Handle multiple sales entries by normalized product name.
+        product_keys = request.POST.getlist('product_key[]')
+        product_labels = request.POST.getlist('product_label[]')
+        quantities = request.POST.getlist('quantity[]')
+        stock_taken_counts = request.POST.getlist('stock_taken_count[]')
+        sale_dates = request.POST.getlist('sale_date[]')
+        notes_list = request.POST.getlist('notes[]')
+
+        # If a sales user records sales without entering any sales count,
+        # assume all previously saved stock taken for the selected date is sold.
+        if action == 'record_sales' and not request.user.is_staff:
+            entered_positive_quantity = False
+            for i in range(len(product_keys)):
+                try:
+                    entered_qty = int((quantities[i] if i < len(quantities) else '0') or 0)
+                except (ValueError, TypeError):
+                    entered_qty = 0
+                if entered_qty > 0:
+                    entered_positive_quantity = True
+                    break
+
+            if not entered_positive_quantity:
+                fallback_sale_date = timezone.now().date()
+                for sale_date_str in sale_dates:
+                    if sale_date_str:
+                        try:
+                            fallback_sale_date = datetime.strptime(sale_date_str, '%Y-%m-%d').date()
+                            break
+                        except ValueError:
+                            continue
+
+                stock_taken_lookup = {
+                    item.product_key: item.stock_taken_count
+                    for item in SalesStockTaken.objects.filter(
+                        salesperson=request.user,
+                        sales_date=fallback_sale_date,
+                    )
+                }
+
+                if stock_taken_lookup:
+                    redirect_url = (
+                        f"{reverse('quick_sales_entry')}"
+                        f"?sales_date={fallback_sale_date.isoformat()}"
+                        f"&prefill_from_stock_taken=1"
+                    )
+                    messages.info(
+                        request,
+                        'Sales Count was left empty, so saved Stock Taken counts were copied to Sales Count. '
+                        'Review and click Record Sales again to confirm.'
+                    )
+                    return redirect(redirect_url)
+
+        grouped_products = get_sales_groups()
+        touched_product_ids = set()
+
+        sales_created = 0
+        errors = []
+        total_items_sold = 0
+        total_selling_price = Decimal('0.0')
+        recorded_sale_dates = set()
+        stock_taken_saved = 0
+        stock_taken_removed = 0
+
+        # Save stock taken values only when explicit action is requested.
+        if action == 'save_stock_taken':
+            for i, product_key in enumerate(product_keys):
+                if not product_key:
+                    continue
+
+                try:
+                    sale_date_str = sale_dates[i] if i < len(sale_dates) else ''
+                    if sale_date_str:
+                        try:
+                            sale_date = datetime.strptime(sale_date_str, '%Y-%m-%d').date()
+                        except ValueError:
+                            sale_date = timezone.now().date()
+                    else:
+                        sale_date = timezone.now().date()
+
+                    candidates = grouped_products.get(product_key, [])
+                    label = product_labels[i] if i < len(product_labels) else product_key
+
+                    if not candidates:
+                        errors.append(f"{label}: Product not found in active inventory")
+                        continue
+
+                    total_available_stock = sum(max(0, item.current_stock) for item in candidates)
+
+                    raw_stock_taken = stock_taken_counts[i].strip() if i < len(stock_taken_counts) else '0'
+                    if not raw_stock_taken:
+                        raw_stock_taken = '0'
+
+                    try:
+                        stock_taken_count = int(raw_stock_taken)
+                        if stock_taken_count < 0:
+                            errors.append(f"{label}: Stock taken count cannot be negative")
+                            stock_taken_count = 0
+                    except (ValueError, TypeError):
+                        errors.append(f"{label}: Invalid stock taken count")
+                        stock_taken_count = 0
+
+                    avg_price = (
+                        sum(item.selling_price for item in candidates) / len(candidates)
+                        if candidates else Decimal('0.0')
+                    )
+
+                    if stock_taken_count > 0:
+                        SalesStockTaken.objects.update_or_create(
+                            salesperson=request.user,
+                            sales_date=sale_date,
+                            product_key=product_key,
+                            defaults={
+                                'product_name': label,
+                                'avg_unit_price': avg_price,
+                                'combined_stock': total_available_stock,
+                                'stock_taken_count': stock_taken_count,
+                            },
+                        )
+                        stock_taken_saved += 1
+                    else:
+                        deleted_count, _ = SalesStockTaken.objects.filter(
+                            salesperson=request.user,
+                            sales_date=sale_date,
+                            product_key=product_key,
+                        ).delete()
+                        if deleted_count:
+                            stock_taken_removed += 1
+                except Exception as e:
+                    errors.append(f"Error processing row {i+1}: {str(e)}")
+
+            if stock_taken_saved > 0:
+                messages.success(request, f'Saved stock taken records for {stock_taken_saved} product(s).')
+            if stock_taken_removed > 0:
+                messages.info(request, f'Removed {stock_taken_removed} empty stock taken record(s).')
+            if errors:
+                for error in errors:
+                    messages.warning(request, f'⚠ {error}')
+            if stock_taken_saved == 0 and stock_taken_removed == 0 and not errors:
+                messages.info(request, 'No stock taken records were updated.')
+
+            return redirect('quick_sales_entry')
+
+        for i, product_key in enumerate(product_keys):
+            if not product_key:
+                continue
+
+            try:
+                try:
+                    quantity = int(quantities[i]) if i < len(quantities) else 0
+                except (ValueError, IndexError):
+                    label = product_labels[i] if i < len(product_labels) else 'Product'
+                    errors.append(f"{label}: Invalid quantity value")
+                    continue
+
+                sale_date_str = sale_dates[i] if i < len(sale_dates) else ''
+                if sale_date_str:
+                    try:
+                        sale_date = datetime.strptime(sale_date_str, '%Y-%m-%d').date()
+                    except ValueError:
+                        sale_date = timezone.now().date()
+                else:
+                    sale_date = timezone.now().date()
+
+                notes = notes_list[i] if i < len(notes_list) else ''
+                candidates = grouped_products.get(product_key, [])
+                label = product_labels[i] if i < len(product_labels) else product_key
+
+                if not candidates:
+                    errors.append(f"{label}: Product not found in active inventory")
+                    continue
+
+                total_available_stock = sum(max(0, item.current_stock) for item in candidates)
+
+                if quantity <= 0:
+                    continue
+
+                if quantity > total_available_stock:
+                    errors.append(
+                        f"{label}: Insufficient stock. Available: {total_available_stock}, Requested: {quantity}"
+                    )
+                    continue
+
+                remaining_quantity = quantity
+                candidates_sorted = sorted(
+                    candidates,
+                    key=lambda item: max(0, item.current_stock),
+                    reverse=True,
+                )
+                for product in candidates_sorted:
+                    if remaining_quantity <= 0:
+                        break
+
+                    available_for_date = max(0, product.current_stock)
+                    allocated_quantity = min(remaining_quantity, available_for_date)
+                    if allocated_quantity <= 0:
+                        continue
+
+                    Sales.objects.create(
+                        product=product,
+                        quantity=allocated_quantity,
+                        unit_price=product.selling_price,
+                        sale_date=sale_date,
+                        recorded_by=request.user,
+                        notes=notes,
+                    )
+
+                    product.current_stock -= allocated_quantity
+                    product.current_stock = max(0, product.current_stock)
+                    product.save()
+
+                    total_items_sold += allocated_quantity
+                    total_selling_price += Decimal(allocated_quantity) * product.selling_price
+                    sales_created += 1
+                    remaining_quantity -= allocated_quantity
+                    touched_product_ids.add(product.id)
+
+                recorded_sale_dates.add(sale_date)
+            except Exception as e:
+                errors.append(f"Error processing row {i+1}: {str(e)}")
+
+        # Rebuild live stock from historical records after backdated inserts.
+        if touched_product_ids:
+            today = timezone.now().date()
+            for product in Product.objects.filter(id__in=touched_product_ids):
+                product.current_stock = max(0, calculate_stock_as_of_date(product, today))
+                product.save(update_fields=['current_stock'])
+
+        # Show results to user
+        if sales_created > 0:
+            if len(recorded_sale_dates) == 1:
+                only_date = next(iter(recorded_sale_dates))
+                date_text = only_date.strftime('%Y-%m-%d')
+            else:
+                sorted_dates = sorted(recorded_sale_dates)
+                date_text = f"{sorted_dates[0].strftime('%Y-%m-%d')} to {sorted_dates[-1].strftime('%Y-%m-%d')}"
+
+            messages.success(request, (
+                f'Successfully recorded {sales_created} sales, '
+                f'{total_items_sold} items sold, '
+                f'sales date: {date_text}, '
+                f'total selling price ₹{total_selling_price:.2f}'
+            ))
+        
+        if errors:
+            for error in errors:
+                messages.warning(request, f'⚠ {error}')
+        
+        if sales_created == 0 and not errors:
+            messages.info(request, 'No sales were recorded.')
+
+        return redirect('quick_sales_entry')
+
+    # GET request - show form with stock as-of selected sales date
+    selected_sales_date_raw = request.GET.get('sales_date') or request.GET.get('date')
+    if selected_sales_date_raw:
+        try:
+            selected_sales_date = datetime.strptime(selected_sales_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_sales_date = timezone.now().date()
+    else:
+        selected_sales_date = timezone.now().date()
+
+    grouped_products_for_form = build_grouped_products_for_sales_date(selected_sales_date)
+    prefill_from_stock_taken = request.GET.get('prefill_from_stock_taken') == '1'
+
+    # Daily Sales Sheet should always reflect live stock, even for backdated sale dates.
+    current_grouped_products = get_sales_groups()
+    for product in grouped_products_for_form:
+        candidates = current_grouped_products.get(product['key'], [])
+        product['stock'] = sum(max(0, item.current_stock) for item in candidates)
+
+    stock_taken_map = {
+        item.product_key: item.stock_taken_count
+        for item in SalesStockTaken.objects.filter(
+            salesperson=request.user,
+            sales_date=selected_sales_date,
+        )
+    }
+
+    for product in grouped_products_for_form:
+        product['stock_taken_count'] = stock_taken_map.get(product['key'], 0)
+        product['prefill_quantity'] = (
+            stock_taken_map.get(product['key'], 0)
+            if (prefill_from_stock_taken and not request.user.is_staff)
+            else 0
+        )
+
+    total_stock_taken_for_date = sum(stock_taken_map.values())
+
+    context = {
+        'products': grouped_products_for_form,
+        'today': timezone.now().date(),
+        'selected_sales_date': selected_sales_date,
+        'total_stock_taken_for_date': total_stock_taken_for_date,
+        'prefill_from_stock_taken': prefill_from_stock_taken,
+    }
+    return render(request, 'inventory/quick_sales_entry.html', context)
+
+@login_required
+def view_sales(request):
+    """View sales for a specific date"""
+    if not request.user.is_staff:
+        messages.error(request, 'You can access only Daily Sales Sheet with this account.')
+        return redirect('quick_sales_entry')
+
+    date_submitted = 'date' in request.GET
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    selected_salesperson_id = request.GET.get('salesperson', '').strip()
+    restored_units_raw = (request.GET.get('restored_units') or '').strip()
+    restored_product = (request.GET.get('restored_product') or '').strip()
+
+    try:
+        restored_units = int(restored_units_raw) if restored_units_raw else 0
+    except ValueError:
+        restored_units = 0
+
+    if isinstance(selected_date, str):
+        try:
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+
+    salespeople = User.objects.filter(
+        id__in=Sales.objects.filter(
+            sale_date=selected_date,
+            recorded_by__isnull=False,
+        ).values_list('recorded_by_id', flat=True).distinct()
+    ).order_by('first_name', 'username')
+
+    salesperson_filter = None
+    if selected_salesperson_id:
+        try:
+            salesperson_filter = salespeople.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
+            selected_salesperson_id = ''
+            if date_submitted:
+                messages.warning(request, 'Selected salesperson was not found for this date.')
+
+    if date_submitted:
+        # Get sales for the selected date and group by product name.
+        daily_sales_qs = Sales.objects.filter(sale_date=selected_date)
+        if salesperson_filter:
+            daily_sales_qs = daily_sales_qs.filter(recorded_by=salesperson_filter)
+        daily_sales_qs = daily_sales_qs.select_related('product', 'recorded_by').order_by('product__sku')
+        grouped_daily_sales = build_sales_groups(daily_sales_qs)
+
+        # Calculate totals
+        total_sales_count = len(grouped_daily_sales)
+        total_revenue = daily_sales_qs.aggregate(
+            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+        )['total']
+        total_quantity = daily_sales_qs.aggregate(
+            total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+        )['total']
+    else:
+        grouped_daily_sales = None
+        total_sales_count = 0
+        total_revenue = 0
+        total_quantity = 0
+
+    context = {
+        'selected_date': selected_date,
+        'selected_salesperson_id': selected_salesperson_id,
+        'selected_salesperson': salesperson_filter,
+        'salespeople': salespeople,
+        'date_submitted': date_submitted,
+        'daily_sales': grouped_daily_sales,
+        'total_sales_count': total_sales_count,
+        'total_revenue': total_revenue,
+        'total_quantity': total_quantity,
+        'restored_units': max(0, restored_units),
+        'restored_product': restored_product,
+    }
+
+    return render(request, 'inventory/view_sales.html', context)
+
+@login_required
+def edit_sale(request, sale_id):
+    """Edit a sales record (admin only)"""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to edit sales.')
+        return redirect('view_sales')
+    
+    sale = get_object_or_404(Sales, pk=sale_id)
+    
+    if request.method == 'POST':
+        quantity = request.POST.get('quantity', sale.quantity)
+        sale_date = request.POST.get('sale_date', sale.sale_date)
+        notes = request.POST.get('notes', sale.notes)
+        
+        try:
+            quantity = int(quantity)
+            
+            if quantity <= 0:
+                messages.error(request, 'Quantity must be greater than 0.')
+                return render(request, 'inventory/edit_sale.html', {'sale': sale})
+            
+            # Calculate stock difference
+            old_quantity = sale.quantity
+            quantity_diff = quantity - old_quantity
+            product = sale.product
+            
+            # Check if sufficient stock available
+            if quantity_diff > 0 and quantity_diff > product.current_stock:
+                messages.error(request, f'Insufficient stock. Available: {product.current_stock}')
+                return render(request, 'inventory/edit_sale.html', {'sale': sale})
+            
+            # Update sale
+            sale.quantity = quantity
+            sale.sale_date = sale_date
+            sale.notes = notes
+            sale.total_price = quantity * sale.unit_price
+            sale.save()
+            
+            # Update stock
+            product.current_stock -= quantity_diff
+            product.current_stock = max(0, product.current_stock)
+            product.save()
+            
+            messages.success(request, 'Sale updated successfully.')
+            return redirect('view_sales', )
+        
+        except ValueError:
+            messages.error(request, 'Invalid quantity value.')
+            return render(request, 'inventory/edit_sale.html', {'sale': sale})
+        except Exception as e:
+            messages.error(request, f'Error updating sale: {str(e)}')
+            return render(request, 'inventory/edit_sale.html', {'sale': sale})
+    
+    context = {'sale': sale}
+    return render(request, 'inventory/edit_sale.html', context)
+
+@login_required
+def delete_sale(request, sale_id):
+    """Delete a sales record (admin only) with stock restoration"""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to delete sales.')
+        return redirect('view_sales')
+    
+    sale = get_object_or_404(Sales, pk=sale_id)
+    sale_date = sale.sale_date
+    
+    if request.method == 'POST':
+        # Restore stock
+        product = sale.product
+        product.current_stock += sale.quantity
+        product.save()
+        
+        # Delete the sale
+        sale.delete()
+        
+        messages.success(request, f'Sale deleted successfully. Stock for {product.name} restored by {sale.quantity} units.')
+        return redirect('view_sales', )
+    
+    context = {'sale': sale}
+    return render(request, 'inventory/confirm_delete_sale.html', context)
+
+
+@login_required
+@require_POST
+def delete_grouped_sale(request):
+    """Delete grouped sales row from View Sales and restore stock quantities."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to delete sales.')
+        return redirect('view_sales')
+
+    selected_date_raw = (request.POST.get('selected_date') or '').strip()
+    product_name_raw = (request.POST.get('product_name') or '').strip()
+    selected_salesperson_id = (request.POST.get('selected_salesperson_id') or '').strip()
+
+    if not selected_date_raw or not product_name_raw:
+        messages.error(request, 'Missing sale date or product name for deletion.')
+        return redirect('view_sales')
+
+    try:
+        selected_date = datetime.strptime(selected_date_raw, '%Y-%m-%d').date()
+    except ValueError:
+        messages.error(request, 'Invalid sale date for deletion.')
+        return redirect('view_sales')
+
+    sales_qs = Sales.objects.filter(sale_date=selected_date).select_related('product')
+
+    if selected_salesperson_id:
+        try:
+            sales_qs = sales_qs.filter(recorded_by_id=int(selected_salesperson_id))
+        except ValueError:
+            messages.error(request, 'Invalid salesperson for deletion.')
+            return redirect('view_sales')
+
+    target_key = normalize_sales_product_name(product_name_raw).lower()
+    matching_sales = [
+        sale for sale in sales_qs
+        if normalize_sales_product_name(sale.product.name).lower() == target_key
+    ]
+
+    if not matching_sales:
+        messages.warning(request, 'No matching sales records were found to delete.')
+    else:
+        restored_quantity = 0
+        for sale in matching_sales:
+            product = sale.product
+            product.current_stock += sale.quantity
+            product.save(update_fields=['current_stock'])
+            restored_quantity += sale.quantity
+
+        Sales.objects.filter(id__in=[sale.id for sale in matching_sales]).delete()
+
+        messages.success(
+            request,
+            f'Deleted sales for {product_name_raw}. Restored stock by {restored_quantity} units.'
+        )
+
+    query_params = {'date': selected_date.isoformat()}
+    if selected_salesperson_id:
+        query_params['salesperson'] = selected_salesperson_id
+    if matching_sales:
+        query_params['restored_units'] = restored_quantity
+        query_params['restored_product'] = product_name_raw
+
+    return redirect(f"{reverse('view_sales')}?{urlencode(query_params)}")
+
+@login_required
+def sales_history(request):
+    """View complete sales history with filtering on a single page."""
+    if not request.user.is_staff:
+        messages.error(request, 'You can access only Daily Sales Sheet with this account.')
+        return redirect('quick_sales_entry')
+
+    clear_filters = request.GET.get('clear') == '1'
+
+    if clear_filters:
+        context = {
+            'sales': Sales.objects.none(),
+            'start_date': '',
+            'end_date': '',
+            'total_sales_value': Decimal('0.0'),
+            'total_sales_count': 0,
+            'total_items_sold': 0,
+        }
+        return render(request, 'inventory/sales_history.html', context)
+
+    sales_qs = Sales.objects.all().select_related('product', 'recorded_by')
+
+    # Filter by date range if provided
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if start_date:
+        sales_qs = sales_qs.filter(sale_date__gte=start_date)
+    if end_date:
+        sales_qs = sales_qs.filter(sale_date__lte=end_date)
+
+    sales = build_sales_groups(sales_qs, include_date=True)
+
+    # Calculate total sales value for filtered results
+    total_sales_value = sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    total_sales_count = len(sales)
+    total_items_sold = sales_qs.aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
+
+    context = {
+        'sales': sales,
+        'start_date': start_date,
+        'end_date': end_date,
+        'total_sales_value': total_sales_value,
+        'total_sales_count': total_sales_count,
+        'total_items_sold': total_items_sold,
+    }
+
+    return render(request, 'inventory/sales_history.html', context)
+
+@login_required
+def get_product_price(request):
+    """AJAX endpoint to get product selling price"""
+    product_id = request.GET.get('product_id')
+    try:
+        product = Product.objects.get(pk=product_id)
+        return JsonResponse({
+            'success': True,
+            'price': float(product.selling_price),
+            'stock': max(0, product.current_stock)
+        })
+    except Product.DoesNotExist:
+        return JsonResponse({'success': False})
+
+
+@login_required
+def get_next_sku(request):
+    """AJAX endpoint to get next SKU based on selected category."""
+    category = request.GET.get('category', '')
+    if not category:
+        return JsonResponse({'success': False, 'message': 'Category is required'})
+
+    next_sku = ProductForm.generate_next_sku(category)
+    prefix = ProductForm.get_category_prefix(category)
+    return JsonResponse({'success': True, 'sku': next_sku, 'prefix': prefix})
+
+
+# ==================== OPERATIONS MODULE ====================
+
+def _can_manage_operation_expense(user, expense):
+    return user.is_staff or expense.created_by_id == user.id
+
+@login_required
+def quick_operations_entry(request):
+    """Quick entry for dated operational expenses."""
+    selected_date_raw = request.GET.get('date')
+    if selected_date_raw:
+        try:
+            selected_date = datetime.fromisoformat(selected_date_raw).date()
+        except ValueError:
+            selected_date = timezone.now().date()
+    else:
+        selected_date = timezone.now().date()
+
+    edit_expense = None
+    edit_id_raw = request.GET.get('edit')
+    if edit_id_raw:
+        try:
+            edit_expense = OperationsExpense.objects.select_related('created_by').get(pk=int(edit_id_raw))
+        except (OperationsExpense.DoesNotExist, ValueError, TypeError):
+            edit_expense = None
+            messages.error(request, 'Selected operation entry was not found.')
+
+    if request.method == 'POST':
+        expense_id = request.POST.get('expense_id')
+        if expense_id:
+            edit_expense = get_object_or_404(OperationsExpense, pk=expense_id)
+            if not _can_manage_operation_expense(request.user, edit_expense):
+                messages.error(request, 'You do not have permission to edit this operation entry.')
+                return redirect(f"{request.path}?date={edit_expense.operation_date.isoformat()}")
+            form = OperationsExpenseForm(request.POST, instance=edit_expense)
+        else:
+            form = OperationsExpenseForm(request.POST)
+
+        if form.is_valid():
+            expense = form.save(commit=False)
+            if not expense.created_by_id:
+                expense.created_by = request.user
+            expense.save()
+            if expense_id:
+                messages.success(request, 'Operation expense entry updated successfully.')
+            else:
+                messages.success(request, 'Operation expense entry saved successfully.')
+            return redirect(f"{request.path}?date={expense.operation_date.isoformat()}")
+    else:
+        if edit_expense:
+            if not _can_manage_operation_expense(request.user, edit_expense):
+                messages.error(request, 'You do not have permission to edit this operation entry.')
+                return redirect(f"{request.path}?date={selected_date.isoformat()}")
+            selected_date = edit_expense.operation_date
+            form = OperationsExpenseForm(instance=edit_expense)
+        else:
+            form = OperationsExpenseForm(initial={'operation_date': selected_date})
+
+    day_entries = OperationsExpense.objects.filter(operation_date=selected_date).select_related('created_by')
+    total_day_operation_cost = day_entries.aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    day_revenue = Sales.objects.filter(sale_date=selected_date).aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    context = {
+        'form': form,
+        'selected_date': selected_date,
+        'operations_entries': day_entries,
+        'total_day_operation_cost': total_day_operation_cost,
+        'day_revenue': day_revenue,
+        'day_net_after_operations': day_revenue - total_day_operation_cost,
+        'edit_expense': edit_expense,
+    }
+    return render(request, 'inventory/quick_operations_entry.html', context)
+
+
+@login_required
+def delete_operations_expense(request, expense_id):
+    """Delete an operations expense entry from the quick operations sheet."""
+    expense = get_object_or_404(OperationsExpense, pk=expense_id)
+    selected_date = request.POST.get('selected_date') or request.GET.get('date') or expense.operation_date.isoformat()
+
+    if request.method != 'POST':
+        messages.error(request, 'Invalid request method for deleting operation entry.')
+        return redirect(f"{reverse('quick_operations_entry')}?date={selected_date}")
+
+    if not _can_manage_operation_expense(request.user, expense):
+        messages.error(request, 'You do not have permission to delete this operation entry.')
+        return redirect(f"{reverse('quick_operations_entry')}?date={selected_date}")
+
+    expense.delete()
+    messages.success(request, 'Operation expense entry deleted successfully.')
+    return redirect(f"{reverse('quick_operations_entry')}?date={selected_date}")
+
+
+@login_required
+def expenses_history(request):
+    """Operations expenses history with optional date-range filter."""
+    today = timezone.now().date()
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
+
+    if start_date_raw:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = today - timedelta(days=30)
+    else:
+        start_date = today - timedelta(days=30)
+
+    if end_date_raw:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = today
+    else:
+        end_date = today
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    entries = OperationsExpense.objects.filter(
+        operation_date__gte=start_date,
+        operation_date__lte=end_date,
+    ).select_related('created_by')
+
+    total_operation_cost = entries.aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    context = {
+        'entries': entries,
+        'start_date': start_date,
+        'end_date': end_date,
+        'total_operation_cost': total_operation_cost,
+    }
+    return render(request, 'inventory/expenses_history.html', context)
+
+# ==================== REPORTS MODULE ====================
+
+@login_required
+def reports_dashboard(request):
+    """Main reports dashboard"""
+    today = timezone.now().date()
+    
+    # Daily stats
+    daily_revenue = Sales.objects.filter(sale_date=today).aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    
+    daily_sales = Sales.objects.filter(sale_date=today).count()
+    
+    # Weekly stats
+    last_week = today - timedelta(days=7)
+    weekly_revenue = Sales.objects.filter(
+        sale_date__gte=last_week,
+        sale_date__lte=today
+    ).aggregate(total=Coalesce(Sum('total_price'), 0, output_field=DecimalField()))['total']
+    
+    weekly_sales = Sales.objects.filter(
+        sale_date__gte=last_week,
+        sale_date__lte=today
+    ).count()
+    
+    context = {
+        'daily_revenue': daily_revenue,
+        'daily_sales': daily_sales,
+        'weekly_revenue': weekly_revenue,
+        'weekly_sales': weekly_sales,
+    }
+    
+    return render(request, 'inventory/reports_dashboard.html', context)
+
+
+def _build_daily_report_context(selected_date):
+    sales_qs = Sales.objects.filter(sale_date=selected_date).select_related('product', 'recorded_by')
+    grouped_sales = {}
+    for sale in sales_qs:
+        product_name = normalize_sales_product_name(sale.product.name)
+        if product_name not in grouped_sales:
+            grouped_sales[product_name] = {
+                'product_name': product_name,
+                'quantity': 0,
+                'revenue': Decimal('0.0'),
+                'cost': Decimal('0.0'),
+                'profit': Decimal('0.0'),
+                'recorded_by': set(),
+            }
+
+        grouped_sales[product_name]['quantity'] += sale.quantity
+        grouped_sales[product_name]['revenue'] += sale.total_price
+        grouped_sales[product_name]['cost'] += Decimal(sale.quantity) * sale.product.cost_price
+        grouped_sales[product_name]['recorded_by'].add(
+            sale.recorded_by.get_full_name() or sale.recorded_by.username
+        )
+
+    sales = []
+    for item in grouped_sales.values():
+        item['unit_price'] = item['revenue'] / item['quantity'] if item['quantity'] else Decimal('0.0')
+        item['profit'] = item['revenue'] - item['cost']
+        item['recorded_by'] = ', '.join(sorted(item['recorded_by'])) if item['recorded_by'] else '-'
+        sales.append(item)
+
+    sales.sort(key=lambda item: item['product_name'])
+
+    total_revenue = sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    total_cost = sum((item['cost'] for item in sales), Decimal('0.0'))
+    total_profit = total_revenue - total_cost
+    total_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    net_profit = total_profit - total_operation_cost
+
+    return {
+        'selected_date': selected_date,
+        'sales': sales,
+        'total_revenue': total_revenue,
+        'total_cost': total_cost,
+        'total_profit': total_profit,
+        'total_operation_cost': total_operation_cost,
+        'net_profit': net_profit,
+        'total_transactions': len(sales),
+    }
+
+
+def _build_weekly_report_context(start_date, end_date):
+    sales = Sales.objects.filter(
+        sale_date__gte=start_date,
+        sale_date__lte=end_date
+    ).select_related('product')
+
+    total_revenue = sales.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    total_cost = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in sales)
+    total_profit = total_revenue - total_cost
+
+    daily_data = {}
+    for i in range((end_date - start_date).days + 1):
+        current_date = start_date + timedelta(days=i)
+        daily_sales = sales.filter(sale_date=current_date)
+        daily_data[current_date.strftime('%a, %m/%d')] = {
+            'count': daily_sales.count(),
+            'quantity': daily_sales.aggregate(
+                total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+            )['total'],
+            'revenue': daily_sales.aggregate(
+                total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+            )['total']
+        }
+
+    weekly_product_breakdown_map = {}
+    for sale in sales:
+        product_name = normalize_sales_product_name(sale.product.name)
+        if product_name not in weekly_product_breakdown_map:
+            weekly_product_breakdown_map[product_name] = {
+                'product_name': product_name,
+                'sort_sku': sale.product.sku or '',
+                'quantity': 0,
+                'revenue': Decimal('0.0'),
+                'cost': Decimal('0.0'),
+                'profit': Decimal('0.0'),
+            }
+        else:
+            current_sku = weekly_product_breakdown_map[product_name]['sort_sku']
+            candidate_sku = sale.product.sku or ''
+            if candidate_sku and (not current_sku or candidate_sku < current_sku):
+                weekly_product_breakdown_map[product_name]['sort_sku'] = candidate_sku
+
+        weekly_product_breakdown_map[product_name]['quantity'] += sale.quantity
+        weekly_product_breakdown_map[product_name]['revenue'] += sale.total_price
+        weekly_product_breakdown_map[product_name]['cost'] += Decimal(sale.quantity) * sale.product.cost_price
+
+    weekly_product_breakdown = []
+    for item in weekly_product_breakdown_map.values():
+        item['unit_price'] = item['revenue'] / item['quantity'] if item['quantity'] else Decimal('0.0')
+        item['profit'] = item['revenue'] - item['cost']
+        item['margin'] = (item['profit'] / item['revenue']) * 100 if item['revenue'] else Decimal('0.0')
+        weekly_product_breakdown.append(item)
+
+    weekly_product_breakdown.sort(key=lambda item: (item.get('sort_sku', ''), item['product_name']))
+
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'total_revenue': total_revenue,
+        'total_cost': total_cost,
+        'total_profit': total_profit,
+        'total_transactions': sales.count(),
+        'daily_data': daily_data,
+        'weekly_product_breakdown': weekly_product_breakdown,
+    }
+
+
+def _build_profit_report_context(start_date, end_date):
+    sales = Sales.objects.filter(
+        sale_date__gte=start_date,
+        sale_date__lte=end_date
+    ).select_related('product')
+
+    products_profit = {}
+    for sale in sales:
+        product_name = normalize_sales_product_name(sale.product.name)
+        profit = sale.get_profit()
+        if product_name not in products_profit:
+            products_profit[product_name] = {'profit': Decimal('0.0'), 'revenue': Decimal('0.0'), 'cost': Decimal('0.0'), 'quantity': 0}
+        products_profit[product_name]['profit'] += Decimal(profit)
+        products_profit[product_name]['revenue'] += sale.total_price
+        products_profit[product_name]['cost'] += Decimal(sale.quantity) * sale.product.cost_price
+        products_profit[product_name]['quantity'] += sale.quantity
+
+    for product in products_profit.values():
+        if product['revenue'] > 0:
+            product['margin'] = (product['profit'] / product['revenue']) * 100
+        else:
+            product['margin'] = Decimal('0.0')
+
+    sorted_products = sorted(products_profit.items(), key=lambda x: x[1]['profit'], reverse=True)
+
+    total_revenue = sales.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    total_cost = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in sales)
+    total_profit = total_revenue - total_cost
+
+    total_quantity = sales.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'total_revenue': total_revenue,
+        'total_cost': total_cost,
+        'total_profit': total_profit,
+        'total_quantity': total_quantity,
+        'products_profit': sorted_products,
+    }
+
+
+def _extract_positive_adjustment_qty(notes):
+    if not notes:
+        return 0
+    match = re.search(r'Adjustment mode:\s*\+(\d+)', notes, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else 0
+
+
+def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed'):
+    movement_types = ['IN']
+    if include_positive_adjustments:
+        movement_types.append('ADJUSTMENT')
+
+    raw_movements = Inventory.objects.filter(
+        movement_type__in=movement_types,
+        movement_date__gte=start_date,
+        movement_date__lte=end_date,
+        product__category__in=['Indian Kulfi', 'Kulfi Corner'],
+    ).select_related('product', 'created_by').order_by(
+        '-movement_date',
+        'product__category',
+        'product__sku',
+        '-created_at',
+    )
+
+    movement_rows = []
+    total_quantity = 0
+    indian_kulfi_quantity = 0
+    kulfi_corner_quantity = 0
+    total_purchase_cost = Decimal('0.0')
+    grouped_general_rows = {}
+
+    for movement in raw_movements:
+        if movement.movement_type == 'IN':
+            qty_in = movement.quantity
+            entry_type = 'Stock In'
+        else:
+            qty_in = _extract_positive_adjustment_qty(movement.notes)
+            if qty_in <= 0:
+                continue
+            entry_type = 'Positive Adjustment'
+
+        # Use manufacturer stamped at entry time if present; fall back to cost-price detection.
+        resolved_manufacturer = (
+            _extract_manufacturer_from_notes(movement.notes)
+            or _identify_manufacturer_from_cost(movement.product.cost_price)
+        )
+
+        unit_cost_val = movement.unit_cost or movement.product.cost_price
+        movement_rows.append({
+            'movement': movement,
+            'qty_in': qty_in,
+            'entry_type': entry_type,
+            'resolved_manufacturer': resolved_manufacturer,
+            'unit_cost': unit_cost_val,
+            'total_cost': Decimal(qty_in) * unit_cost_val,
+        })
+
+        total_quantity += qty_in
+        total_purchase_cost += Decimal(qty_in) * unit_cost_val
+        if resolved_manufacturer == 'Indian Kulfi':
+            indian_kulfi_quantity += qty_in
+        elif resolved_manufacturer == 'Kulfi Corner':
+            kulfi_corner_quantity += qty_in
+
+        general_key = (
+            movement.movement_date,
+            resolved_manufacturer,
+        )
+        if general_key not in grouped_general_rows:
+            grouped_general_rows[general_key] = {
+                'movement_date': movement.movement_date,
+                'manufacturer': resolved_manufacturer,
+                'total_quantity': 0,
+                'overall_cost_price': Decimal('0.0'),
+            }
+
+        grouped_general_rows[general_key]['total_quantity'] += qty_in
+        grouped_general_rows[general_key]['overall_cost_price'] += Decimal(qty_in) * (movement.unit_cost or movement.product.cost_price)
+
+    general_rows = []
+    for grouped_row in grouped_general_rows.values():
+        row_total_qty = grouped_row['total_quantity']
+        general_rows.append({
+            'movement_date': grouped_row['movement_date'],
+            'manufacturer': grouped_row['manufacturer'],
+            'total_quantity': row_total_qty,
+            'total_packs': (Decimal(row_total_qty) / Decimal('6')) if row_total_qty else Decimal('0.0'),
+            'overall_cost_price': grouped_row['overall_cost_price'],
+        })
+
+    general_rows.sort(key=lambda row: (
+        -row['movement_date'].toordinal(),
+        row['manufacturer'],
+    ))
+
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'movement_rows': movement_rows,
+        'total_entries': len(movement_rows),
+        'total_quantity': total_quantity,
+        'indian_kulfi_quantity': indian_kulfi_quantity,
+        'kulfi_corner_quantity': kulfi_corner_quantity,
+        'total_purchase_cost': total_purchase_cost,
+        'include_positive_adjustments': include_positive_adjustments,
+        'general_rows': general_rows,
+        'report_mode': report_mode,
+    }
+
+@login_required
+def daily_report(request):
+    """Daily sales report"""
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    try:
+        selected_date = datetime.fromisoformat(selected_date).date()
+    except ValueError:
+        selected_date = timezone.now().date()
+
+    context = _build_daily_report_context(selected_date)
+    
+    return render(request, 'inventory/daily_report.html', context)
+
+@login_required
+def weekly_report(request):
+    """Weekly sales report"""
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+    
+    if not start_date:
+        start_date = (today - timedelta(days=today.weekday()))
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+    
+    if not end_date:
+        end_date = start_date + timedelta(days=6)
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+    
+    context = _build_weekly_report_context(start_date, end_date)
+    
+    return render(request, 'inventory/weekly_report.html', context)
+
+@login_required
+def profit_report(request):
+    """Profit analysis report"""
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+    
+    if not start_date:
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+    
+    if not end_date:
+        end_date = today
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+    
+    context = _build_profit_report_context(start_date, end_date)
+    
+    return render(request, 'inventory/profit_report.html', context)
+
+
+@login_required
+def stock_report(request):
+    """Stock-in report by date range for Indian Kulfi and Kulfi Corner."""
+    if request.GET.get('clear') == '1':
+        context = {
+            'start_date': None,
+            'end_date': None,
+            'movement_rows': [],
+            'general_rows': [],
+            'total_entries': 0,
+            'total_quantity': 0,
+            'indian_kulfi_quantity': 0,
+            'kulfi_corner_quantity': 0,
+            'total_purchase_cost': Decimal('0.0'),
+            'include_positive_adjustments': False,
+            'report_mode': 'detailed',
+            'is_cleared': True,
+        }
+        return render(request, 'inventory/stock_report.html', context)
+
+    today = timezone.now().date()
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
+    include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    report_mode = request.GET.get('view_mode', 'detailed')
+    if report_mode not in ('general', 'detailed'):
+        report_mode = 'detailed'
+
+    if not start_date_raw:
+        start_date = today - timedelta(days=30)
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = today - timedelta(days=30)
+
+    if not end_date_raw:
+        end_date = today
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = today
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+
+    context = _build_stock_report_context(
+        start_date,
+        end_date,
+        include_positive_adjustments=include_positive_adjustments,
+        report_mode=report_mode,
+    )
+    context['is_cleared'] = False
+    return render(request, 'inventory/stock_report.html', context)
+
+
+@login_required
+def print_stock_report_html(request):
+    today = timezone.now().date()
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
+    include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    report_mode = request.GET.get('view_mode', 'detailed')
+    if report_mode not in ('general', 'detailed'):
+        report_mode = 'detailed'
+
+    if not start_date_raw:
+        start_date = today - timedelta(days=30)
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = today - timedelta(days=30)
+
+    if not end_date_raw:
+        end_date = today
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = today
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_stock_report_context(
+        start_date,
+        end_date,
+        include_positive_adjustments=include_positive_adjustments,
+        report_mode=report_mode,
+    )
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_stock_report.html', context)
+
+
+@login_required
+def print_stock_report_pdf(request):
+    today = timezone.now().date()
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
+    include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    report_mode = request.GET.get('view_mode', 'detailed')
+    if report_mode not in ('general', 'detailed'):
+        report_mode = 'detailed'
+
+    if not start_date_raw:
+        start_date = today - timedelta(days=30)
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = today - timedelta(days=30)
+
+    if not end_date_raw:
+        end_date = today
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = today
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_stock_report_context(
+        start_date,
+        end_date,
+        include_positive_adjustments=include_positive_adjustments,
+        report_mode=report_mode,
+    )
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="stock_report_{start_date}_{end_date}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(
+            f"<b>Stock Report - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}</b>",
+            styles['Title']
+        )
+        elements.append(title)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        summary = (
+            f"<b>Total Entries:</b> {context['total_entries']} | "
+            f"<b>Total Qty In:</b> {context['total_quantity']} | "
+            f"<b>Indian Kulfi:</b> {context['indian_kulfi_quantity']} | "
+            f"<b>Kulfi Corner:</b> {context['kulfi_corner_quantity']} | "
+            f"<b>Total Purchase Cost:</b> Rs.{context['total_purchase_cost']:.2f}"
+        )
+        elements.append(Paragraph(summary, styles['Normal']))
+        if include_positive_adjustments:
+            elements.append(Paragraph('<b>Included:</b> Positive adjustments', styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        if report_mode == 'general':
+            data = [['Stock In Date', 'Total Packs', 'Total Quantity', 'Overall Cost Price', 'Manufacturer']]
+            for row in context['general_rows']:
+                data.append([
+                    row['movement_date'].strftime('%Y-%m-%d'),
+                    f"{row['total_packs']:.2f}",
+                    str(row['total_quantity']),
+                    f"Rs.{row['overall_cost_price']:.2f}",
+                    row['manufacturer'],
+                ])
+            col_widths = [1.05 * inch, 1.0 * inch, 1.0 * inch, 1.4 * inch, 1.25 * inch]
+        else:
+            data = [['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In']]
+            for row in context['movement_rows']:
+                movement = row['movement']
+                data.append([
+                    movement.movement_date.strftime('%Y-%m-%d'),
+                    movement.product.category,
+                    row['entry_type'],
+                    movement.product.sku,
+                    movement.product.name,
+                    str(row['qty_in']),
+                ])
+            col_widths = [0.95 * inch, 1.0 * inch, 1.1 * inch, 0.9 * inch, 2.0 * inch, 0.7 * inch]
+
+        table = Table(data, colWidths=col_widths)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        if report_mode == 'general':
+            table.setStyle(TableStyle([
+                ('ALIGN', (4, 1), (4, -1), 'LEFT'),
+            ]))
+        else:
+            table.setStyle(TableStyle([
+                ('ALIGN', (4, 1), (4, -1), 'LEFT'),
+            ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('stock_report')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('stock_report')
+
+
+@login_required
+def print_stock_report_excel(request):
+    today = timezone.now().date()
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
+    include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    report_mode = request.GET.get('view_mode', 'detailed')
+    if report_mode not in ('general', 'detailed'):
+        report_mode = 'detailed'
+
+    if not start_date_raw:
+        start_date = today - timedelta(days=30)
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = today - timedelta(days=30)
+
+    if not end_date_raw:
+        end_date = today
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = today
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_stock_report_context(
+        start_date,
+        end_date,
+        include_positive_adjustments=include_positive_adjustments,
+        report_mode=report_mode,
+    )
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Stock Report"
+
+        ws.column_dimensions['A'].width = 14
+        ws.column_dimensions['B'].width = 18
+        ws.column_dimensions['C'].width = 18
+        ws.column_dimensions['D'].width = 14
+        ws.column_dimensions['E'].width = 26
+        ws.column_dimensions['F'].width = 14
+        ws.column_dimensions['G'].width = 18
+
+        ws['A1'] = f"STOCK REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = f"Total Entries: {context['total_entries']}"
+        ws['A4'] = f"Total Qty In: {context['total_quantity']}"
+        ws['A5'] = f"Indian Kulfi Qty: {context['indian_kulfi_quantity']}"
+        ws['A6'] = f"Kulfi Corner Qty: {context['kulfi_corner_quantity']}"
+        ws['A7'] = f"Total Purchase Cost: Rs.{context['total_purchase_cost']:.2f}"
+        ws['A8'] = f"Positive Adjustments Included: {'Yes' if include_positive_adjustments else 'No'}"
+        ws['A9'] = f"Report Mode: {'General' if report_mode == 'general' else 'Detailed'}"
+
+        header_row = 11
+        if report_mode == 'general':
+            headers = ['Stock In Date', 'Total Packs', 'Total Quantity', 'Overall Cost Price', 'Manufacturer']
+        else:
+            headers = ['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=header_row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row_number = header_row + 1
+        if report_mode == 'general':
+            for row in context['general_rows']:
+                ws.cell(row=row_number, column=1).value = row['movement_date'].strftime('%Y-%m-%d')
+                ws.cell(row=row_number, column=2).value = float(row['total_packs'])
+                ws.cell(row=row_number, column=3).value = int(row['total_quantity'])
+                ws.cell(row=row_number, column=4).value = float(row['overall_cost_price'])
+                ws.cell(row=row_number, column=5).value = row['manufacturer']
+                row_number += 1
+        else:
+            for row in context['movement_rows']:
+                movement = row['movement']
+                ws.cell(row=row_number, column=1).value = movement.movement_date.strftime('%Y-%m-%d')
+                ws.cell(row=row_number, column=2).value = movement.product.category
+                ws.cell(row=row_number, column=3).value = row['entry_type']
+                ws.cell(row=row_number, column=4).value = movement.product.sku
+                ws.cell(row=row_number, column=5).value = movement.product.name
+                ws.cell(row=row_number, column=6).value = int(row['qty_in'])
+                row_number += 1
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="stock_report_{start_date}_{end_date}.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('stock_report')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('stock_report')
+
+
+@login_required
+def print_daily_report_html(request):
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    try:
+        selected_date = datetime.fromisoformat(selected_date).date()
+    except ValueError:
+        selected_date = timezone.now().date()
+
+    context = _build_daily_report_context(selected_date)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_daily_report.html', context)
+
+
+@login_required
+def print_daily_report_pdf(request):
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    try:
+        selected_date = datetime.fromisoformat(selected_date).date()
+    except ValueError:
+        selected_date = timezone.now().date()
+
+    context = _build_daily_report_context(selected_date)
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="daily_report_{selected_date}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(f"<b>Daily Report - {selected_date.strftime('%d %B %Y')}</b>", styles['Title'])
+        elements.append(title)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        summary = (
+            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
+            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f} | "
+            f"<b>Operation Cost:</b> Rs.{context['total_operation_cost']:.2f} | "
+            f"<b>Net Profit:</b> Rs.{context['net_profit']:.2f}"
+        )
+        elements.append(Paragraph(summary, styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        data = [['Product', 'Qty', 'Unit Price', 'Revenue', 'Cost', 'Profit']]
+        for item in context['sales']:
+            data.append([
+                item['product_name'],
+                str(item['quantity']),
+                f"Rs.{item['unit_price']:.2f}",
+                f"Rs.{item['revenue']:.2f}",
+                f"Rs.{item['cost']:.2f}",
+                f"Rs.{item['profit']:.2f}",
+            ])
+
+        data.append([
+            'TOTAL',
+            '',
+            '',
+            f"Rs.{context['total_revenue']:.2f}",
+            f"Rs.{context['total_cost']:.2f}",
+            f"Rs.{context['total_profit']:.2f}",
+        ])
+
+        table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('daily_report')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('daily_report')
+
+
+@login_required
+def print_daily_report_excel(request):
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    try:
+        selected_date = datetime.fromisoformat(selected_date).date()
+    except ValueError:
+        selected_date = timezone.now().date()
+
+    context = _build_daily_report_context(selected_date)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Daily Report"
+
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['D'].width = 14
+        ws.column_dimensions['E'].width = 14
+        ws.column_dimensions['F'].width = 14
+
+        ws['A1'] = f"DAILY REPORT - {selected_date.strftime('%d %B %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = f"Transactions: {context['total_transactions']}"
+        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+        ws['A7'] = f"Operation Cost: {context['total_operation_cost']:.2f}"
+        ws['A8'] = f"Net Profit: {context['net_profit']:.2f}"
+
+        headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=10, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row = 11
+        for item in context['sales']:
+            ws.cell(row=row, column=1).value = item['product_name']
+            ws.cell(row=row, column=2).value = int(item['quantity'])
+            ws.cell(row=row, column=3).value = float(item['unit_price'])
+            ws.cell(row=row, column=4).value = float(item['revenue'])
+            ws.cell(row=row, column=5).value = float(item['cost'])
+            ws.cell(row=row, column=6).value = float(item['profit'])
+            row += 1
+
+        ws.cell(row=row, column=1).value = 'TOTAL'
+        ws.cell(row=row, column=4).value = float(context['total_revenue'])
+        ws.cell(row=row, column=5).value = float(context['total_cost'])
+        ws.cell(row=row, column=6).value = float(context['total_profit'])
+        for col in range(1, 7):
+            ws.cell(row=row, column=col).font = Font(bold=True)
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="daily_report_{selected_date}.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('daily_report')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('daily_report')
+
+
+@login_required
+def print_weekly_report_html(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=today.weekday())
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = start_date + timedelta(days=6)
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_weekly_report_context(start_date, end_date)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_weekly_report.html', context)
+
+
+@login_required
+def print_weekly_report_pdf(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=today.weekday())
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = start_date + timedelta(days=6)
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_weekly_report_context(start_date, end_date)
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="weekly_report_{start_date}_{end_date}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(
+            f"<b>Weekly Report - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}</b>",
+            styles['Title']
+        )
+        elements.append(title)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        summary = (
+            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
+            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
+        )
+        elements.append(Paragraph(summary, styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        elements.append(Paragraph('<b>Daily Breakdown</b>', styles['Heading3']))
+        daily_data = [['Date', 'Transactions', 'Quantity Sold', 'Revenue']]
+        for day, row in context['daily_data'].items():
+            daily_data.append([
+                day,
+                str(row['count']),
+                f"{Decimal(row['quantity']):.0f}",
+                f"Rs.{row['revenue']:.2f}",
+            ])
+
+        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.2 * inch, 1.3 * inch])
+        daily_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(daily_table)
+        elements.append(Spacer(1, 0.18 * inch))
+
+        elements.append(Paragraph('<b>Product-wise Breakdown</b>', styles['Heading3']))
+
+        data = [['Product', 'Qty', 'Revenue', 'Cost', 'Profit', 'Margin %']]
+        for item in context['weekly_product_breakdown']:
+            data.append([
+                item['product_name'],
+                str(item['quantity']),
+                f"Rs.{item['revenue']:.2f}",
+                f"Rs.{item['cost']:.2f}",
+                f"Rs.{item['profit']:.2f}",
+                f"{item['margin']:.2f}%",
+            ])
+
+        table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 0.8 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('weekly_report')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('weekly_report')
+
+
+@login_required
+def print_weekly_report_excel(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=today.weekday())
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = start_date + timedelta(days=6)
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_weekly_report_context(start_date, end_date)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Weekly Report"
+
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['D'].width = 14
+        ws.column_dimensions['E'].width = 14
+        ws.column_dimensions['F'].width = 12
+
+        ws['A1'] = f"WEEKLY REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = f"Transactions: {context['total_transactions']}"
+        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+
+        ws['A8'] = 'Daily Breakdown'
+        ws['A8'].font = Font(bold=True)
+
+        daily_headers = ['Date', 'Transactions', 'Quantity Sold', 'Revenue']
+        daily_header_row = 9
+        for col, header in enumerate(daily_headers, 1):
+            cell = ws.cell(row=daily_header_row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row = daily_header_row + 1
+        for day, data in context['daily_data'].items():
+            ws.cell(row=row, column=1).value = day
+            ws.cell(row=row, column=2).value = int(data['count'])
+            ws.cell(row=row, column=3).value = int(data['quantity'])
+            ws.cell(row=row, column=4).value = float(data['revenue'])
+            row += 1
+
+        row += 1
+        ws.cell(row=row, column=1).value = 'Product-wise Breakdown'
+        ws.cell(row=row, column=1).font = Font(bold=True)
+        row += 1
+
+        headers = ['Product', 'Quantity', 'Revenue', 'Cost', 'Profit', 'Margin %']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row += 1
+        for item in context['weekly_product_breakdown']:
+            ws.cell(row=row, column=1).value = item['product_name']
+            ws.cell(row=row, column=2).value = int(item['quantity'])
+            ws.cell(row=row, column=3).value = float(item['revenue'])
+            ws.cell(row=row, column=4).value = float(item['cost'])
+            ws.cell(row=row, column=5).value = float(item['profit'])
+            ws.cell(row=row, column=6).value = float(item['margin'])
+            row += 1
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="weekly_report_{start_date}_{end_date}.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('weekly_report')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('weekly_report')
+
+
+@login_required
+def print_profit_report_html(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = today
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_profit_report_context(start_date, end_date)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_profit_report.html', context)
+
+
+@login_required
+def print_profit_report_pdf(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = today
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_profit_report_context(start_date, end_date)
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="profit_report_{start_date}_{end_date}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(
+            f"<b>Profit Report - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}</b>",
+            styles['Title']
+        )
+        elements.append(title)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        summary = (
+            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
+            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
+        )
+        elements.append(Paragraph(summary, styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        data = [['Product', 'Qty', 'Revenue', 'Cost', 'Profit', 'Margin %']]
+        for product_name, item in context['products_profit']:
+            data.append([
+                product_name,
+                str(item['quantity']),
+                f"Rs.{item['revenue']:.2f}",
+                f"Rs.{item['cost']:.2f}",
+                f"Rs.{item['profit']:.2f}",
+                f"{item['margin']:.2f}%",
+            ])
+
+        table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 0.8 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('profit_report')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('profit_report')
+
+
+@login_required
+def print_profit_report_excel(request):
+    today = timezone.now().date()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = datetime.fromisoformat(start_date).date()
+
+    if not end_date:
+        end_date = today
+    else:
+        end_date = datetime.fromisoformat(end_date).date()
+
+    context = _build_profit_report_context(start_date, end_date)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Profit Report"
+
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['D'].width = 14
+        ws.column_dimensions['E'].width = 14
+        ws.column_dimensions['F'].width = 12
+
+        ws['A1'] = f"PROFIT REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A4'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A5'] = f"Profit: {context['total_profit']:.2f}"
+
+        headers = ['Product', 'Quantity', 'Revenue', 'Cost', 'Profit', 'Margin %']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=7, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row = 8
+        for product_name, item in context['products_profit']:
+            ws.cell(row=row, column=1).value = product_name
+            ws.cell(row=row, column=2).value = int(item['quantity'])
+            ws.cell(row=row, column=3).value = float(item['revenue'])
+            ws.cell(row=row, column=4).value = float(item['cost'])
+            ws.cell(row=row, column=5).value = float(item['profit'])
+            ws.cell(row=row, column=6).value = float(item['margin'])
+            row += 1
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="profit_report_{start_date}_{end_date}.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('profit_report')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('profit_report')
+
+# ==================== USER MANAGEMENT ====================
+
+@login_required
+@permission_required('auth.change_user', raise_exception=True)
+def user_list(request):
+    """List all users"""
+    users = User.objects.all()
+    context = {'users': users}
+    return render(request, 'inventory/user_list.html', context)
+
+@login_required
+@permission_required('auth.add_user', raise_exception=True)
+def add_user(request):
+    """Add new user"""
+    if request.method == 'POST':
+        form = UserManagementForm(request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'User created successfully')
+            return redirect('user_list')
+    else:
+        form = UserManagementForm()
+    
+    context = {'form': form, 'title': 'Add New User'}
+    return render(request, 'inventory/user_form.html', context)
+
+@login_required
+@permission_required('auth.change_user', raise_exception=True)
+def edit_user(request, user_id):
+    """Edit user"""
+    user = get_object_or_404(User, pk=user_id)
+    
+    if request.method == 'POST':
+        form = UserManagementForm(request.POST, instance=user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'User updated successfully')
+            return redirect('user_list')
+    else:
+        form = UserManagementForm(instance=user)
+    
+    context = {'form': form, 'user': user, 'title': f'Edit {user.username}'}
+    return render(request, 'inventory/user_form.html', context)
+
+@login_required
+@permission_required('auth.delete_user', raise_exception=True)
+def delete_user(request, user_id):
+    """Delete user"""
+    user = get_object_or_404(User, pk=user_id)
+    
+    if request.method == 'POST':
+        user.delete()
+        messages.success(request, f'User {user.username} deleted')
+        return redirect('user_list')
+    
+        messages.success(request, f'User {user.username} deleted')
+        return redirect('user_list')
+    
+    context = {'user': user}
+    return render(request, 'inventory/delete_confirm.html', context)
+
+# ==================== PRINT MODULE ====================
+
+@login_required
+def print_sales_html(request):
+    """Print sales in HTML format (browser print-friendly)"""
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    selected_salesperson_id = request.GET.get('salesperson', '').strip()
+
+    if isinstance(selected_date, str):
+        try:
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+
+    salesperson_filter = None
+    if selected_salesperson_id:
+        try:
+            salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
+            selected_salesperson_id = ''
+
+    # Get sales for the selected date and group by normalized product name.
+    daily_sales_qs = Sales.objects.filter(sale_date=selected_date)
+    if salesperson_filter:
+        daily_sales_qs = daily_sales_qs.filter(recorded_by=salesperson_filter)
+    daily_sales_qs = daily_sales_qs.select_related('product', 'recorded_by').order_by('product__sku')
+    daily_sales = build_sales_groups(daily_sales_qs)
+
+    # Calculate totals
+    total_sales_count = len(daily_sales)
+    total_revenue = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    total_quantity = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+
+    context = {
+        'selected_date': selected_date,
+        'daily_sales': daily_sales,
+        'total_sales_count': total_sales_count,
+        'total_revenue': total_revenue,
+        'total_quantity': total_quantity,
+        'selected_salesperson': salesperson_filter,
+        'now': timezone.now(),
+    }
+
+    return render(request, 'inventory/print_sales.html', context)
+
+@login_required
+def print_sales_pdf(request):
+    """Export sales as PDF"""
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    selected_salesperson_id = request.GET.get('salesperson', '').strip()
+
+    if isinstance(selected_date, str):
+        try:
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+
+    salesperson_filter = None
+    if selected_salesperson_id:
+        try:
+            salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
+            selected_salesperson_id = ''
+
+    # Get sales for the selected date and group by normalized product name.
+    daily_sales_qs = Sales.objects.filter(sale_date=selected_date)
+    if salesperson_filter:
+        daily_sales_qs = daily_sales_qs.filter(recorded_by=salesperson_filter)
+    daily_sales_qs = daily_sales_qs.select_related('product', 'recorded_by').order_by('product__sku')
+    daily_sales = build_sales_groups(daily_sales_qs)
+
+    # Calculate totals
+    total_revenue = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+    total_quantity = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+        
+        # Create PDF response
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="sales_{selected_date}.pdf"'
+        
+        # Create PDF
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+        
+        # Title
+        title = Paragraph(f"<b>Sales Report - {selected_date.strftime('%d %B %Y')}</b>", styles['Title'])
+        elements.append(title)
+        elements.append(Spacer(1, 0.3*inch))
+        
+        # Summary
+        if salesperson_filter:
+            salesperson_name = salesperson_filter.get_full_name() or salesperson_filter.username
+            summary_text = f"<b>Summary:</b> Salesperson: {salesperson_name} | Total Sales: {len(daily_sales)} | Total Quantity: {total_quantity} | Total Revenue: ₹{total_revenue:,.2f}"
+        else:
+            summary_text = f"<b>Summary:</b> Total Sales: {len(daily_sales)} | Total Quantity: {total_quantity} | Total Revenue: ₹{total_revenue:,.2f}"
+        elements.append(Paragraph(summary_text, styles['Normal']))
+        elements.append(Spacer(1, 0.2*inch))
+        
+        # Data for table
+        data = [['Product Name', 'Qty', 'Unit Price', 'Total Price', 'Recorded By']]
+        for sale in daily_sales:
+            data.append([
+                sale['product_name'],
+                str(sale['quantity']),
+                f"₹{sale['unit_price']:.2f}",
+                f"₹{sale['total_price']:.2f}",
+                sale['recorded_by']
+            ])
+        
+        # Add totals row
+        data.append(['TOTAL', str(total_quantity), '', f"₹{total_revenue:.2f}", ''])
+        
+        # Create table
+        table = Table(data, colWidths=[2.2*inch, 0.8*inch, 1.0*inch, 1.1*inch, 1.6*inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        elements.append(table)
+        
+        # Build PDF
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('view_sales')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('view_sales')
+
+@login_required
+def print_sales_excel(request):
+    """Export sales as Excel"""
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    selected_salesperson_id = request.GET.get('salesperson', '').strip()
+
+    if isinstance(selected_date, str):
+        try:
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+
+    salesperson_filter = None
+    if selected_salesperson_id:
+        try:
+            salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
+            selected_salesperson_id = ''
+
+    # Get sales for the selected date and group by normalized product name.
+    daily_sales_qs = Sales.objects.filter(sale_date=selected_date)
+    if salesperson_filter:
+        daily_sales_qs = daily_sales_qs.filter(recorded_by=salesperson_filter)
+    daily_sales_qs = daily_sales_qs.select_related('product', 'recorded_by').order_by('product__sku')
+    daily_sales = build_sales_groups(daily_sales_qs)
+
+    # Calculate totals
+    total_quantity = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+    total_revenue = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sales Report"
+        
+        # Set column widths
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 15
+        ws.column_dimensions['D'].width = 15
+        ws.column_dimensions['E'].width = 24
+        
+        # Title
+        ws['A1'] = f"SALES REPORT - {selected_date.strftime('%d %B %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+        
+        # Summary section
+        ws['A3'] = 'Summary:'
+        ws['A3'].font = Font(bold=True)
+        ws['A4'] = f"Total Sales Count: {len(daily_sales)}"
+        ws['A5'] = f"Total Quantity: {total_quantity}"
+        ws['A6'] = f"Total Revenue: ₹{total_revenue:,.2f}"
+        if salesperson_filter:
+            ws['A7'] = f"Salesperson: {salesperson_filter.get_full_name() or salesperson_filter.username}"
+        
+        # Headers
+        headers = ['Product Name', 'Quantity', 'Unit Price', 'Total Price', 'Recorded By']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=8, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Data rows
+        row = 9
+        for sale in daily_sales:
+            ws.cell(row=row, column=1).value = sale['product_name']
+            ws.cell(row=row, column=2).value = sale['quantity']
+            ws.cell(row=row, column=3).value = float(sale['unit_price'])
+            ws.cell(row=row, column=4).value = float(sale['total_price'])
+            ws.cell(row=row, column=5).value = sale['recorded_by']
+            
+            # Center align numeric columns
+            for col in [2, 3, 4]:
+                ws.cell(row=row, column=col).alignment = Alignment(horizontal="center")
+            
+            row += 1
+        
+        # Totals row
+        totals_row = row
+        ws.cell(row=totals_row, column=1).value = "TOTAL"
+        ws.cell(row=totals_row, column=1).font = Font(bold=True)
+        ws.cell(row=totals_row, column=2).value = total_quantity
+        ws.cell(row=totals_row, column=2).font = Font(bold=True)
+        ws.cell(row=totals_row, column=4).value = float(total_revenue)
+        ws.cell(row=totals_row, column=4).font = Font(bold=True)
+        
+        # Format currency columns
+        for r in range(9, totals_row + 1):
+            ws.cell(row=r, column=3).number_format = '₹#,##0.00'
+            ws.cell(row=r, column=4).number_format = '₹#,##0.00'
+        
+        # Response
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="sales_{selected_date}.xlsx"'
+        wb.save(response)
+        return response
+        
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('view_sales')

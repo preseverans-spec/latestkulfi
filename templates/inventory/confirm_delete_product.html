@@ -1,0 +1,24 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Confirm Delete - {{ product.name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5>Confirm Delete</h5>
+    </div>
+    <div class="card-body">
+        <p>Are you sure you want to delete <strong>{{ product.name }}</strong>?</p>
+        <p class="text-muted">This action will hide the product from inventory and cannot be reversed via UI.</p>
+
+        <form method="POST">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Yes, delete product</button>
+            <a href="{% url 'inventory_list' %}" class="btn btn-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">Cancel</a>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+
+
