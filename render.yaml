@@ -31,7 +31,7 @@ services:
       - key: CSRF_COOKIE_SECURE
         value: True
       - key: ADMIN_USERNAME
-        sync: false
+        value: jsdansari
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
