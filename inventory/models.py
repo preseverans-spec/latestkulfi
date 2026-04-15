@@ -69,8 +69,12 @@ class Inventory(models.Model):
     reference_document = models.CharField(max_length=100, blank=True, help_text="PO/DO/Invoice number")
     notes = models.TextField(blank=True)
     movement_date = models.DateField(default=timezone.now, help_text="The actual date of inventory movement")
+    client_txn_id = models.CharField(max_length=64, blank=True, null=True, db_index=True, help_text="Client-generated idempotency key")
+    client_updated_at = models.DateTimeField(blank=True, null=True, db_index=True, help_text="Client-side update timestamp")
+    server_version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-created_at']
@@ -78,6 +82,13 @@ class Inventory(models.Model):
     
     def __str__(self):
         return f"{self.product.name} - {self.movement_type} ({self.quantity})"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values_list('server_version', flat=True).first()
+            if previous is not None:
+                self.server_version = previous + 1
+        super().save(*args, **kwargs)
 
 
 class Sales(models.Model):
@@ -93,9 +104,13 @@ class Sales(models.Model):
     
     # User info
     recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    client_txn_id = models.CharField(max_length=64, blank=True, null=True, db_index=True, help_text="Client-generated idempotency key")
+    client_updated_at = models.DateTimeField(blank=True, null=True, db_index=True, help_text="Client-side update timestamp")
+    server_version = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-sale_date', '-sale_time']
@@ -107,6 +122,10 @@ class Sales(models.Model):
     def save(self, *args, **kwargs):
         # Auto-calculate total price
         self.total_price = self.quantity * self.unit_price
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values_list('server_version', flat=True).first()
+            if previous is not None:
+                self.server_version = previous + 1
         super().save(*args, **kwargs)
     
     def get_profit(self):
@@ -144,8 +163,12 @@ class OperationsExpense(models.Model):
     operation_date = models.DateField(default=timezone.now)
     details = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    client_txn_id = models.CharField(max_length=64, blank=True, null=True, db_index=True, help_text="Client-generated idempotency key")
+    client_updated_at = models.DateTimeField(blank=True, null=True, db_index=True, help_text="Client-side update timestamp")
+    server_version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-operation_date', '-created_at']
@@ -153,6 +176,57 @@ class OperationsExpense(models.Model):
 
     def __str__(self):
         return f"{self.operation_date} - {self.details} ({self.amount})"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values_list('server_version', flat=True).first()
+            if previous is not None:
+                self.server_version = previous + 1
+        super().save(*args, **kwargs)
+
+
+class SyncEvent(models.Model):
+    """Server-side sync audit log and idempotency ledger for mobile clients."""
+
+    ENTITY_CHOICES = [
+        ('products', 'Products'),
+        ('inventory_movements', 'Inventory Movements'),
+        ('sales', 'Sales'),
+        ('expenses', 'Expenses'),
+    ]
+    OPERATION_CHOICES = [
+        ('create', 'Create'),
+        ('update', 'Update'),
+        ('delete', 'Delete'),
+    ]
+    STATUS_CHOICES = [
+        ('processed', 'Processed'),
+        ('duplicate', 'Duplicate'),
+        ('conflict', 'Conflict'),
+        ('rejected', 'Rejected'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    device_id = models.CharField(max_length=128, blank=True)
+    client_txn_id = models.CharField(max_length=64, blank=True, db_index=True)
+    entity = models.CharField(max_length=40, choices=ENTITY_CHOICES)
+    operation = models.CharField(max_length=10, choices=OPERATION_CHOICES)
+    object_id = models.BigIntegerField(null=True, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processed')
+    message = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['entity', 'object_id']),
+            models.Index(fields=['user', 'client_txn_id']),
+        ]
+        verbose_name_plural = "Sync Events"
+
+    def __str__(self):
+        return f"{self.entity}:{self.operation} ({self.status})"
 
 
 class DailySalesReport(models.Model):

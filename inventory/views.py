@@ -640,7 +640,6 @@ def quick_inventory_entry(request):
         adjustment_modes = request.POST.getlist('adjustment_mode[]')
         quantities = request.POST.getlist('quantity[]')
         quantity_units = request.POST.getlist('quantity_unit[]')
-        cost_prices = request.POST.getlist('cost_price[]')
         movement_dates = request.POST.getlist('movement_date[]')
 
         created_count = 0
@@ -674,7 +673,9 @@ def quick_inventory_entry(request):
             movement_type = movement_types[i] if i < len(movement_types) else 'IN'
             adjustment_mode = adjustment_modes[i] if i < len(adjustment_modes) else 'PLUS'
             quantity_unit = quantity_units[i] if i < len(quantity_units) else 'NOS'
-            cost_price = Decimal(cost_prices[i]) if i < len(cost_prices) and cost_prices[i] else Decimal('0.0')
+            # Always derive base cost from the selected product on the server.
+            # This avoids mismatches from stale/tampered form values.
+            cost_price = product.cost_price if product.cost_price is not None else Decimal('0.0')
 
             # Enforce manufacturer-specific cost maps so correct prices are always applied.
             normalized_name = normalize_sales_product_name(product.name).lower()
@@ -826,6 +827,7 @@ def quick_inventory_entry(request):
                 'ik_stock': 0,
                 'kc_stock': 0,
                 'ik_cost_override': IK_QUICK_ENTRY_COST_BY_NAME.get(norm_key),
+                'kc_cost_override': KC_QUICK_ENTRY_COST_BY_NAME.get(norm_key),
             }
         category = (product.category or '').strip().lower()
         if category == 'kulfi corner':

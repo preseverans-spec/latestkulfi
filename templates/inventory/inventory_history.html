@@ -45,7 +45,13 @@
                     </td>
                     <td>{{ movement.quantity }}</td>
                     <td>{{ movement.reference_document|default:'-' }}</td>
-                    <td>{{ movement.created_by.first_name|default:movement.created_by.username }}</td>
+                    <td>
+                        {% if movement.created_by %}
+                        {{ movement.created_by.first_name|default:movement.created_by.username }}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% empty %}
                 <tr>

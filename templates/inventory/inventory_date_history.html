@@ -175,7 +175,13 @@
                                             <span class="text-muted">-</span>
                                         {% endif %}
                                     </td>
-                                    <td>{{ movement.created_by.get_full_name|default:movement.created_by.username }}</td>
+                                    <td>
+                                        {% if movement.created_by %}
+                                            {{ movement.created_by.get_full_name|default:movement.created_by.username }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
                                 </tr>
                                 {% endfor %}
                             </tbody>

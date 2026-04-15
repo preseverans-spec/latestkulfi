@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import dj_database_url
 from django.core.management.utils import get_random_secret_key
+from datetime import timedelta
 
 
 def _as_bool(value, default=False):
@@ -34,7 +35,10 @@ SECRET_KEY = os.getenv('SECRET_KEY') or get_random_secret_key()
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = _as_bool(os.getenv('DEBUG'), default=True)
 
-ALLOWED_HOSTS = _as_list(os.getenv('ALLOWED_HOSTS'), default='127.0.0.1,localhost')
+ALLOWED_HOSTS = _as_list(
+    os.getenv('ALLOWED_HOSTS'),
+    default='127.0.0.1,localhost,10.0.2.2,10.26.96.48,10.75.241.48'
+)
 
 CSRF_TRUSTED_ORIGINS = _as_list(os.getenv('CSRF_TRUSTED_ORIGINS'), default='')
 
@@ -46,7 +50,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'drf_spectacular',
     'inventory',
+    'api',
 ]
 
 MIDDLEWARE = [
@@ -139,3 +146,28 @@ CSRF_COOKIE_SECURE = _as_bool(os.getenv('CSRF_COOKIE_SECURE'), default=not DEBUG
 SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000' if not DEBUG else '0'))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = _as_bool(os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS'), default=not DEBUG)
 SECURE_HSTS_PRELOAD = _as_bool(os.getenv('SECURE_HSTS_PRELOAD'), default=not DEBUG)
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'api.pagination.StandardResultsPagination',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'UPDATE_LAST_LOGIN': True,
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Indian Kulfi Mobile API',
+    'DESCRIPTION': 'API endpoints for Indian Kulfi Mobile App (Android/iOS).',
+    'VERSION': '1.0.0',
+}

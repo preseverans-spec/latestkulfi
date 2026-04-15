@@ -110,7 +110,7 @@
                             data-ik-cost="{% if group.ik_cost_override %}{{ group.ik_cost_override }}{% elif group.ik %}{{ group.ik.cost_price }}{% else %}0{% endif %}"
                             data-ik-stock="{{ group.ik_stock|default:'0' }}"
                             data-kc-id="{{ group.kc.id|default:'' }}"
-                            data-kc-cost="{{ group.kc.cost_price|default:'0' }}"
+                            data-kc-cost="{% if group.kc_cost_override %}{{ group.kc_cost_override }}{% elif group.kc %}{{ group.kc.cost_price }}{% else %}0{% endif %}"
                             data-kc-stock="{{ group.kc_stock|default:'0' }}">
                             <td>
                                 {{ group.name }}
@@ -118,8 +118,8 @@
                             </td>
                             <td class="stock-cell">{{ group.ik_stock|default:'0' }}</td>
                             <td>
-                                <span class="badge bg-secondary cost-price-display">₹{% if group.ik_cost_override %}{{ group.ik_cost_override|floatformat:2 }}{% else %}{{ group.ik.cost_price|default:'0'|floatformat:2 }}{% endif %}</span>
-                                <input type="hidden" name="cost_price[]" class="cost-price-input" value="{% if group.ik_cost_override %}{{ group.ik_cost_override }}{% elif group.ik %}{{ group.ik.cost_price }}{% else %}0{% endif %}">
+                                <span class="badge bg-secondary cost-price-display">₹{% if selected_manufacturer == 'Kulfi Corner' %}{% if group.kc_cost_override %}{{ group.kc_cost_override|floatformat:2 }}{% else %}{{ group.kc.cost_price|default:'0'|floatformat:2 }}{% endif %}{% else %}{% if group.ik_cost_override %}{{ group.ik_cost_override|floatformat:2 }}{% else %}{{ group.ik.cost_price|default:'0'|floatformat:2 }}{% endif %}{% endif %}</span>
+                                <input type="hidden" name="cost_price[]" class="cost-price-input" value="{% if selected_manufacturer == 'Kulfi Corner' %}{% if group.kc_cost_override %}{{ group.kc_cost_override }}{% elif group.kc %}{{ group.kc.cost_price }}{% else %}0{% endif %}{% else %}{% if group.ik_cost_override %}{{ group.ik_cost_override }}{% elif group.ik %}{{ group.ik.cost_price }}{% else %}0{% endif %}{% endif %}">
                             </td>
                             <td>
                                 <select name="movement_type[]" class="form-select movement-type-select" style="max-width: 150px;">
