@@ -74,7 +74,9 @@
                     <thead class="table-light">
                         <tr>
                             <th>Product Name</th>
+                            {% if user.is_staff %}
                             <th>Avg Unit Price</th>
+                            {% endif %}
                             <th>Combined Stock</th>
                             {% if not user.is_staff %}
                             <th>Stock Taken Count</th>
@@ -93,11 +95,16 @@
                                 {{ product.name }}
                                 <input type="hidden" name="product_key[]" value="{{ product.key }}">
                                 <input type="hidden" name="product_label[]" value="{{ product.name }}">
+                                {% if not user.is_staff %}
+                                <input type="hidden" class="unit-price-value" value="{{ product.avg_price }}">
+                                {% endif %}
                             </td>
+                            {% if user.is_staff %}
                             <td>
                                 <span class="unit-price">₹{{ product.avg_price|floatformat:2 }}</span>
                                 <input type="hidden" class="unit-price-value" value="{{ product.avg_price }}">
                             </td>
+                            {% endif %}
                             <td>{{ product.stock }}</td>
                             {% if not user.is_staff %}
                             <td>
