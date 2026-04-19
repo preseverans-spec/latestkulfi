@@ -37,7 +37,7 @@ DEBUG = _as_bool(os.getenv('DEBUG'), default=True)
 
 ALLOWED_HOSTS = _as_list(
     os.getenv('ALLOWED_HOSTS'),
-    default='indian-kulfi-production.up.railway.app'
+    default='127.0.0.1,localhost,10.0.2.2,10.26.96.48,10.75.241.48'
 )
 
 CSRF_TRUSTED_ORIGINS = _as_list(os.getenv('CSRF_TRUSTED_ORIGINS'), default='')
