@@ -270,6 +270,57 @@
         .navbar-brand:hover {
             background-color: white;
         }
+
+        @media (max-width: 767.98px) {
+            body {
+                overflow-x: hidden;
+            }
+
+            .sidebar {
+                min-height: auto;
+                padding-top: 12px;
+            }
+
+            .sidebar a {
+                padding: 10px 14px;
+                font-size: 0.95rem;
+            }
+
+            .sidebar a.sub-item {
+                padding-left: 24px;
+            }
+
+            .sidebar a.sub-item:hover,
+            .sidebar a.sub-item.active {
+                padding-left: 30px;
+            }
+
+            .main-content {
+                padding: 14px;
+            }
+
+            .page-title {
+                font-size: 1.25rem;
+                margin-bottom: 18px;
+                padding-bottom: 10px;
+            }
+
+            .stat-card .stat-value {
+                font-size: 1.35rem;
+            }
+
+            .table {
+                display: block;
+                width: 100%;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+
+            .navbar-brand img {
+                width: 48px !important;
+                height: 48px !important;
+            }
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -305,7 +356,7 @@
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
-            <nav class="col-md-2 sidebar">
+            <nav class="col-12 col-md-2 sidebar">
                 <div>
                     {% if user.is_staff %}
                     <!-- Dashboard - Home -->
@@ -422,7 +473,7 @@
             </nav>
 
             <!-- Main Content -->
-            <main class="col-md-10 main-content">
+            <main class="col-12 col-md-10 main-content">
                 {% if request.resolver_match.url_name != 'dashboard' %}
                 <div class="page-back-wrap">
                     <button type="button" class="btn btn-outline-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href='{% if user.is_staff %}{% url 'dashboard' %}{% else %}{% url 'quick_sales_entry' %}{% endif %}'; }">
