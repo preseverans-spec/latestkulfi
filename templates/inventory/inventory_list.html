@@ -240,8 +240,22 @@
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
                     <li><a class="dropdown-item" href="#" id="print-inventory-action">
-                        <i class="fas fa-file-alt"></i> Print (HTML)
+                        <i class="fas fa-print"></i> Print Current Page
                     </a></li>
+                    {% with qs=request.GET.urlencode %}
+                    <li><a class="dropdown-item" href="{% url 'print_inventory_html' %}{% if qs %}?{{ qs }}{% endif %}" target="_blank">
+                        <i class="fas fa-file-code"></i> Print HTML Report
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_inventory_pdf' %}{% if qs %}?{{ qs }}{% endif %}">
+                        <i class="fas fa-file-pdf"></i> Export PDF
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_inventory_excel' %}{% if qs %}?{{ qs }}{% endif %}">
+                        <i class="fas fa-file-excel"></i> Export Excel
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_inventory_csv' %}{% if qs %}?{{ qs }}{% endif %}">
+                        <i class="fas fa-file-csv"></i> Export CSV
+                    </a></li>
+                    {% endwith %}
                 </ul>
             </div>
         </div>

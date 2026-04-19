@@ -60,6 +60,14 @@
             <form method="GET" class="d-flex gap-2 flex-wrap">
                 <input type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="form-control" style="max-width: 150px;">
                 <input type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control" style="max-width: 150px;">
+                <select name="salesperson" class="form-control" style="max-width: 240px;">
+                    <option value="">All Salespersons</option>
+                    {% for sp in salespeople %}
+                    <option value="{{ sp.id }}" {% if selected_salesperson_id == sp.id|stringformat:'s' %}selected{% endif %}>
+                        {{ sp.get_full_name|default:sp.username }}
+                    </option>
+                    {% endfor %}
+                </select>
                 <button type="submit" class="btn btn-primary">
                     <i class="fas fa-search"></i> View Report
                 </button>
@@ -69,18 +77,25 @@
                     <i class="fas fa-print"></i> Print
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}" target="_blank">
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" target="_blank">
                         <i class="fas fa-file-alt"></i> Print (HTML)
                     </a></li>
-                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}">
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
                         <i class="fas fa-file-pdf"></i> Download PDF
                     </a></li>
-                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}">
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
                         <i class="fas fa-file-excel"></i> Download Excel
                     </a></li>
                 </ul>
             </div>
         </div>
+        {% if selected_salesperson %}
+        <div class="mt-2">
+            <span class="badge bg-info text-dark">
+                Filtered by: {{ selected_salesperson.get_full_name|default:selected_salesperson.username }}
+            </span>
+        </div>
+        {% endif %}
     </div>
 </div>
 

@@ -1,11 +1,13 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from inventory.models import Inventory, OperationsExpense, Product, Sales
+from inventory.models import Inventory, OperationsExpense, OperationsIncome, Product, Sales
 
 
 class SyncApiTests(TestCase):
@@ -508,3 +510,102 @@ class SyncApiTests(TestCase):
 		self.assertEqual(accepted[0]['status'], 'created')
 		self.assertEqual(accepted[1]['status'], 'duplicate')
 		self.assertEqual(Sales.objects.filter(client_txn_id='batch-dup-sale-1').count(), 1)
+
+
+class ViewSalesDeleteTests(TestCase):
+	def setUp(self):
+		self.client = Client()
+		self.admin_user = User.objects.create_user(
+			username='admin-delete',
+			password='pass12345',
+			is_staff=True,
+		)
+		self.product = Product.objects.create(
+			name='Malai Kulfi',
+			sku='IK-900',
+			category='Kulfi',
+			cost_price='10.00',
+			selling_price='20.00',
+			current_stock=5,
+			reorder_level=5,
+			is_active=True,
+		)
+
+	def test_view_sales_shows_delete_all_button_for_admin(self):
+		Sales.objects.create(
+			product=self.product,
+			quantity=2,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=self.admin_user,
+		)
+
+		self.client.force_login(self.admin_user)
+		response = self.client.get(reverse('view_sales'), {'date': '2026-04-15'})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, reverse('delete_sales_for_date'))
+
+	def test_delete_sales_for_date_recalculates_stock_after_later_adjustment(self):
+		Sales.objects.create(
+			product=self.product,
+			quantity=2,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=self.admin_user,
+		)
+		Sales.objects.create(
+			product=self.product,
+			quantity=1,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=self.admin_user,
+		)
+		Inventory.objects.create(
+			product=self.product,
+			movement_type='ADJUSTMENT',
+			quantity=5,
+			unit_cost='10.00',
+			movement_date='2026-04-16',
+			created_by=self.admin_user,
+		)
+
+		self.client.force_login(self.admin_user)
+		response = self.client.post(
+			reverse('delete_sales_for_date'),
+			{
+				'selected_date': '2026-04-15',
+			},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		self.assertRedirects(response, f"{reverse('view_sales')}?date=2026-04-15")
+		self.assertFalse(Sales.objects.filter(sale_date='2026-04-15').exists())
+
+		self.product.refresh_from_db()
+		self.assertEqual(self.product.current_stock, 5)
+
+
+class QuickIncomeEntryTests(TestCase):
+	def setUp(self):
+		self.client = Client()
+		self.admin_user = User.objects.create_user(
+			username='admin-income',
+			password='pass12345',
+			is_staff=True,
+		)
+
+	def test_quick_income_entry_creates_income_record(self):
+		self.client.force_login(self.admin_user)
+		response = self.client.post(
+			reverse('quick_income_entry'),
+			{
+				'income_date': '2026-04-19',
+				'details': 'Bank transfer from catering',
+				'amount': '1500.00',
+			},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		self.assertRedirects(response, f"{reverse('quick_income_entry')}?date=2026-04-19")
+		self.assertTrue(OperationsIncome.objects.filter(details='Bank transfer from catering').exists())

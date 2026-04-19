@@ -187,32 +187,11 @@
             }
         }
         
-        .no-print {
-            text-align: right;
-            margin-bottom: 20px;
-        }
-        
-        .no-print button {
-            padding: 8px 14px;
-            background-color: #572809;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-        }
-        
-        .no-print button:hover {
-            background-color: #1a2a3a;
-        }
+
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="no-print">
-            <button onclick="window.print()"><i class="fas fa-print"></i> Print this page</button>
-        </div>
-        
         <div class="header">
             <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="report-logo">
             <h1>SALES REPORT</h1>

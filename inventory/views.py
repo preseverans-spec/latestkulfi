@@ -1,6 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Sum, Count, Q, F, DecimalField, OuterRef, Subquery, Case, When, IntegerField
 from django.db.models.functions import Coalesce
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
@@ -21,8 +22,8 @@ import os
 import re
 from collections import defaultdict
 
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, DailySalesReport, WeeklyReport, ProfitReport
-from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, UserManagementForm
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport
+from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
 
 
 # Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
@@ -339,10 +340,13 @@ def calculate_stock_as_of_date(product, selected_date):
     if last_adjustment:
         base_date = last_adjustment.movement_date
         base_qty = last_adjustment.quantity
+        base_created_at = last_adjustment.created_at
         movement_sums = Inventory.objects.filter(
             product=product,
-            movement_date__gt=base_date,
             movement_date__lte=selected_date
+        ).filter(
+            Q(movement_date__gt=base_date) |
+            Q(movement_date=base_date, created_at__gt=base_created_at)
         ).aggregate(
             in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
             out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
@@ -351,8 +355,10 @@ def calculate_stock_as_of_date(product, selected_date):
         # Sales reduce stock and must be included in historical stock reconstruction.
         sales_total = Sales.objects.filter(
             product=product,
-            sale_date__gt=base_date,
             sale_date__lte=selected_date
+        ).filter(
+            Q(sale_date__gt=base_date) |
+            Q(sale_date=base_date, created_at__gt=base_created_at)
         ).aggregate(
             total=Coalesce(Sum('quantity'), 0)
         )['total']
@@ -416,29 +422,35 @@ def get_stock_as_of_date_map(products, selected_date):
     for row in Product.objects.filter(id__in=product_ids).annotate(
         last_adjustment_date=Subquery(last_adjustment_query.values('movement_date')[:1]),
         last_adjustment_qty=Subquery(last_adjustment_query.values('quantity')[:1]),
-    ).values('id', 'last_adjustment_date', 'last_adjustment_qty'):
+        last_adjustment_created_at=Subquery(last_adjustment_query.values('created_at')[:1]),
+    ).values('id', 'last_adjustment_date', 'last_adjustment_qty', 'last_adjustment_created_at'):
         if row['last_adjustment_date'] is not None:
             last_adjustments_map[row['id']] = (
                 row['last_adjustment_date'],
                 row['last_adjustment_qty'],
+                row['last_adjustment_created_at'],
             )
 
     stock_map = {}
     for product_id in product_ids:
         if product_id in last_adjustments_map:
-            base_date, base_qty = last_adjustments_map[product_id]
+            base_date, base_qty, base_created_at = last_adjustments_map[product_id]
             movement_after = Inventory.objects.filter(
                 product_id=product_id,
-                movement_date__gt=base_date,
                 movement_date__lte=selected_date
+            ).filter(
+                Q(movement_date__gt=base_date) |
+                Q(movement_date=base_date, created_at__gt=base_created_at)
             ).aggregate(
                 in_total=Coalesce(Sum('quantity', filter=Q(movement_type='IN')), 0),
                 out_total=Coalesce(Sum('quantity', filter=Q(movement_type='OUT')), 0)
             )
             sales_after = Sales.objects.filter(
                 product_id=product_id,
-                sale_date__gt=base_date,
                 sale_date__lte=selected_date
+            ).filter(
+                Q(sale_date__gt=base_date) |
+                Q(sale_date=base_date, created_at__gt=base_created_at)
             ).aggregate(
                 total=Coalesce(Sum('quantity'), 0)
             )['total']
@@ -629,6 +641,319 @@ def inventory_list(request):
     }
 
     return render(request, 'inventory/inventory_list.html', context)
+
+
+def _build_inventory_export_context(request):
+    """Build filtered inventory data for View Inventory exports."""
+    search_query = request.GET.get('search', '').strip()
+    category_filter = request.GET.getlist('category')
+    status_filter = request.GET.get('status', '')
+    movement_filter = request.GET.get('movement_type', '')
+    as_of_date = request.GET.get('as_of_date', '')
+    sort_by = request.GET.get('sort', 'sku')
+
+    selected_date = None
+    if as_of_date:
+        try:
+            selected_date = datetime.strptime(as_of_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+            as_of_date = selected_date.isoformat()
+
+    generated_at = timezone.localtime()
+    if selected_date:
+        stock_as_of_label = f"{selected_date.strftime('%Y-%m-%d')} 23:59:59"
+    else:
+        stock_as_of_label = generated_at.strftime('%Y-%m-%d %H:%M:%S')
+
+    products = Product.objects.filter(is_active=True)
+
+    if search_query:
+        products = products.filter(
+            Q(name__icontains=search_query) |
+            Q(sku__icontains=search_query) |
+            Q(category__icontains=search_query)
+        )
+
+    if category_filter:
+        products = products.filter(category__in=category_filter)
+
+    sort_options = {
+        'name': 'name',
+        '-name': '-name',
+        'sku': 'sku',
+        '-sku': '-sku',
+        'current_stock': 'display_stock',
+        '-current_stock': '-display_stock',
+        'reorder_level': 'reorder_level',
+        '-reorder_level': '-reorder_level',
+        'cost_price': 'cost_price',
+        '-cost_price': '-cost_price',
+        'selling_price': 'selling_price',
+        '-selling_price': '-selling_price',
+    }
+
+    products_ordered = list(products.order_by('sku'))
+    stock_map = get_stock_as_of_date_map(products_ordered, selected_date) if selected_date else {}
+
+    for product in products_ordered:
+        if selected_date:
+            product.display_stock = max(0, stock_map.get(product.id, 0))
+        else:
+            product.display_stock = max(0, product.current_stock)
+
+    movement_product_ids = set()
+    if movement_filter:
+        movement_query = Inventory.objects.filter(
+            product_id__in=[product.id for product in products_ordered],
+            movement_type=movement_filter
+        )
+        if selected_date:
+            movement_query = movement_query.filter(movement_date=selected_date)
+        movement_product_ids = set(
+            movement_query.values_list('product_id', flat=True).distinct()
+        )
+
+    product_list = []
+    for product in products_ordered:
+        display_stock = product.display_stock
+
+        movement_exists = True
+        if movement_filter:
+            movement_exists = product.id in movement_product_ids
+
+        if not movement_exists:
+            continue
+
+        if status_filter == 'low_stock' and display_stock > product.reorder_level:
+            continue
+        if status_filter == 'in_stock' and display_stock <= product.reorder_level:
+            continue
+
+        product_list.append(product)
+
+    sort_key = sort_options.get(sort_by, 'sku')
+    reverse_sort = sort_key.startswith('-')
+    sort_attr = sort_key[1:] if reverse_sort else sort_key
+    product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+
+    total_stock = 0
+    total_cost_price = Decimal('0.0')
+    total_sales_price = Decimal('0.0')
+    for product in product_list:
+        qty = max(0, getattr(product, 'display_stock', product.current_stock))
+        total_stock += qty
+        total_cost_price += Decimal(qty) * product.cost_price
+        total_sales_price += Decimal(qty) * product.selling_price
+
+    return {
+        'products': product_list,
+        'selected_date': selected_date,
+        'as_of_date': as_of_date,
+        'stock_as_of_label': stock_as_of_label,
+        'generated_at': generated_at,
+        'search_query': search_query,
+        'category_filter': category_filter,
+        'status_filter': status_filter,
+        'movement_filter': movement_filter,
+        'sort_by': sort_by,
+        'total_stock': total_stock,
+        'total_cost_price': total_cost_price,
+        'total_sales_price': total_sales_price,
+    }
+
+
+@login_required
+def print_inventory_html(request):
+    """Print-friendly HTML for View Inventory."""
+    context = _build_inventory_export_context(request)
+    context['now'] = timezone.localtime()
+    return render(request, 'inventory/print_inventory.html', context)
+
+
+@login_required
+def print_inventory_pdf(request):
+    """Export View Inventory as PDF."""
+    context = _build_inventory_export_context(request)
+
+    try:
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="inventory_view.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=landscape(A4))
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.8 * inch, height=0.8 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.1 * inch))
+
+        elements.append(Paragraph('<b>View Inventory Report</b>', styles['Title']))
+        elements.append(Spacer(1, 0.15 * inch))
+        elements.append(Paragraph(
+            (
+                f"<b>Stock As Of:</b> {context['stock_as_of_label']} | "
+                f"<b>Total Stock:</b> {context['total_stock']} | "
+                f"<b>Total Cost Price:</b> Rs.{context['total_cost_price']:.2f} | "
+                f"<b>Total Sales Price:</b> Rs.{context['total_sales_price']:.2f}"
+            ),
+            styles['Normal'],
+        ))
+        elements.append(Spacer(1, 0.15 * inch))
+
+        data = [['Product', 'SKU', 'Category', 'Stock', 'Reorder', 'Cost Price', 'Selling Price', 'Status']]
+        for product in context['products']:
+            stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
+            status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+            data.append([
+                product.name,
+                product.sku,
+                product.category,
+                str(stock_value),
+                str(product.reorder_level),
+                f"Rs.{product.cost_price:.2f}",
+                f"Rs.{product.selling_price:.2f}",
+                status,
+            ])
+
+        table = Table(
+            data,
+            colWidths=[2.0 * inch, 1.0 * inch, 1.4 * inch, 0.8 * inch, 0.8 * inch, 1.0 * inch, 1.1 * inch, 0.9 * inch],
+            repeatRows=1,
+        )
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            ('ALIGN', (2, 1), (2, -1), 'LEFT'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+        return response
+
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('inventory_list')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('inventory_list')
+
+
+@login_required
+def print_inventory_excel(request):
+    """Export View Inventory as Excel."""
+    context = _build_inventory_export_context(request)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Inventory View'
+
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 18
+        ws.column_dimensions['D'].width = 10
+        ws.column_dimensions['E'].width = 12
+        ws.column_dimensions['F'].width = 14
+        ws.column_dimensions['G'].width = 14
+        ws.column_dimensions['H'].width = 14
+
+        ws['A1'] = 'VIEW INVENTORY REPORT'
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A3'] = f"Stock As Of: {context['stock_as_of_label']}"
+        ws['A4'] = f"Total Stock: {context['total_stock']}"
+        ws['A5'] = f"Total Cost Price: Rs.{context['total_cost_price']:.2f}"
+        ws['A6'] = f"Total Sales Price: Rs.{context['total_sales_price']:.2f}"
+
+        headers = ['Product Name', 'SKU', 'Category', 'Stock', 'Reorder Level', 'Cost Price', 'Selling Price', 'Status']
+        header_row = 8
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=header_row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row_number = header_row + 1
+        for product in context['products']:
+            stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
+            status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+
+            ws.cell(row=row_number, column=1).value = product.name
+            ws.cell(row=row_number, column=2).value = product.sku
+            ws.cell(row=row_number, column=3).value = product.category
+            ws.cell(row=row_number, column=4).value = int(stock_value)
+            ws.cell(row=row_number, column=5).value = int(product.reorder_level)
+            ws.cell(row=row_number, column=6).value = float(product.cost_price)
+            ws.cell(row=row_number, column=7).value = float(product.selling_price)
+            ws.cell(row=row_number, column=8).value = status
+            row_number += 1
+
+        for row in range(header_row + 1, row_number):
+            ws.cell(row=row, column=6).number_format = '₹#,##0.00'
+            ws.cell(row=row, column=7).number_format = '₹#,##0.00'
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="inventory_view.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('inventory_list')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('inventory_list')
+
+
+@login_required
+def print_inventory_csv(request):
+    """Export View Inventory as CSV."""
+    context = _build_inventory_export_context(request)
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="inventory_view.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(['View Inventory Report'])
+    writer.writerow(['Stock As Of', context['stock_as_of_label']])
+    writer.writerow(['Total Stock', context['total_stock']])
+    writer.writerow(['Total Cost Price', f"Rs.{context['total_cost_price']:.2f}"])
+    writer.writerow(['Total Sales Price', f"Rs.{context['total_sales_price']:.2f}"])
+    writer.writerow([])
+    writer.writerow(['Product Name', 'SKU', 'Category', 'Stock', 'Reorder Level', 'Cost Price', 'Selling Price', 'Status'])
+
+    for product in context['products']:
+        stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
+        status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+        writer.writerow([
+            product.name,
+            product.sku,
+            product.category,
+            stock_value,
+            product.reorder_level,
+            f"{product.cost_price:.2f}",
+            f"{product.selling_price:.2f}",
+            status,
+        ])
+
+    return response
 
 @login_required
 def quick_inventory_entry(request):
@@ -997,6 +1322,37 @@ def normalize_sales_product_name(name):
     return cleaned_name.strip()
 
 
+# Fixed display order required for Daily Sales Sheet product rows.
+DAILY_SALES_PRODUCT_DISPLAY_ORDER = [
+    'malai',
+    'pista badam',
+    'chocolate',
+    'kesar badam',
+    'kesar pista',
+    'strawberry',
+    'dry fruit',
+    'black currant',
+    'litchi',
+    'caramel coffee',
+    'rose',
+    'mango malai',
+    'butterscotch',
+    'coconut',
+    'elaichi',
+    'guava',
+    'paan',
+    'kesar kajoor',
+]
+DAILY_SALES_PRODUCT_DISPLAY_INDEX = {
+    name: index for index, name in enumerate(DAILY_SALES_PRODUCT_DISPLAY_ORDER)
+}
+DAILY_SALES_PRODUCT_DISPLAY_ALIASES = {
+    'black current': 'black currant',
+    'blackcurrent': 'black currant',
+    'straswberry': 'strawberry',
+}
+
+
 def group_active_products_by_name():
     """Return active products grouped by normalized product name key."""
     grouped = defaultdict(list)
@@ -1053,6 +1409,18 @@ def build_sales_groups(sales_qs, include_date=False):
     return grouped_rows
 
 
+def _recalculate_current_stock_for_products(product_ids):
+    """Rebuild current stock from inventory and sales history for the affected products."""
+    unique_product_ids = {product_id for product_id in product_ids if product_id}
+    if not unique_product_ids:
+        return
+
+    today = timezone.now().date()
+    for product in Product.objects.filter(id__in=unique_product_ids):
+        product.current_stock = max(0, calculate_stock_as_of_date(product, today))
+        product.save(update_fields=['current_stock'])
+
+
 def build_grouped_products_for_sales_date(selected_sales_date):
     """Build grouped product rows with combined stock and average unit price for a date."""
     grouped_products = defaultdict(list)
@@ -1064,7 +1432,14 @@ def build_grouped_products_for_sales_date(selected_sales_date):
     grouped_products_for_form = []
     grouped_items = sorted(
         grouped_products.items(),
-        key=lambda item: min((product.sku for product in item[1]), default='ZZZ999')
+        key=lambda item: (
+            DAILY_SALES_PRODUCT_DISPLAY_INDEX.get(
+                DAILY_SALES_PRODUCT_DISPLAY_ALIASES.get(item[0].strip().lower(), item[0].strip().lower()),
+                len(DAILY_SALES_PRODUCT_DISPLAY_INDEX)
+            ),
+            item[0].strip().lower(),
+            min((product.sku for product in item[1]), default='ZZZ999'),
+        )
     )
     for group_name, products_in_group in grouped_items:
         stock_map = get_stock_as_of_date_map(products_in_group, selected_sales_date)
@@ -1464,10 +1839,7 @@ def quick_sales_entry(request):
 
         # Rebuild live stock from historical records after backdated inserts.
         if touched_product_ids:
-            today = timezone.now().date()
-            for product in Product.objects.filter(id__in=touched_product_ids):
-                product.current_stock = max(0, calculate_stock_as_of_date(product, today))
-                product.save(update_fields=['current_stock'])
+            _recalculate_current_stock_for_products(touched_product_ids)
 
         # Show results to user
         if sales_created > 0:
@@ -1682,18 +2054,20 @@ def delete_sale(request, sale_id):
         return redirect('view_sales')
     
     sale = get_object_or_404(Sales, pk=sale_id)
-    sale_date = sale.sale_date
     
     if request.method == 'POST':
-        # Restore stock
-        product = sale.product
-        product.current_stock += sale.quantity
-        product.save()
-        
-        # Delete the sale
-        sale.delete()
-        
-        messages.success(request, f'Sale deleted successfully. Stock for {product.name} restored by {sale.quantity} units.')
+        product_id = sale.product_id
+        product_name = sale.product.name
+        deleted_quantity = sale.quantity
+
+        with transaction.atomic():
+            sale.delete()
+            _recalculate_current_stock_for_products([product_id])
+
+        messages.success(
+            request,
+            f'Sale deleted successfully. Removed {deleted_quantity} units from {product_name} sales history and recalculated inventory.'
+        )
         return redirect('view_sales', )
     
     context = {'sale': sale}
@@ -1703,7 +2077,7 @@ def delete_sale(request, sale_id):
 @login_required
 @require_POST
 def delete_grouped_sale(request):
-    """Delete grouped sales row from View Sales and restore stock quantities."""
+    """Delete grouped sales row from View Sales and rebuild current stock."""
     if not request.user.is_staff:
         messages.error(request, 'You do not have permission to delete sales.')
         return redirect('view_sales')
@@ -1741,17 +2115,20 @@ def delete_grouped_sale(request):
         messages.warning(request, 'No matching sales records were found to delete.')
     else:
         restored_quantity = 0
+        touched_product_ids = []
+        sale_ids = []
         for sale in matching_sales:
-            product = sale.product
-            product.current_stock += sale.quantity
-            product.save(update_fields=['current_stock'])
             restored_quantity += sale.quantity
+            touched_product_ids.append(sale.product_id)
+            sale_ids.append(sale.id)
 
-        Sales.objects.filter(id__in=[sale.id for sale in matching_sales]).delete()
+        with transaction.atomic():
+            Sales.objects.filter(id__in=sale_ids).delete()
+            _recalculate_current_stock_for_products(touched_product_ids)
 
         messages.success(
             request,
-            f'Deleted sales for {product_name_raw}. Restored stock by {restored_quantity} units.'
+            f'Deleted sales for {product_name_raw}. Removed {restored_quantity} units from sales history and recalculated inventory.'
         )
 
     query_params = {'date': selected_date.isoformat()}
@@ -1760,6 +2137,55 @@ def delete_grouped_sale(request):
     if matching_sales:
         query_params['restored_units'] = restored_quantity
         query_params['restored_product'] = product_name_raw
+
+    return redirect(f"{reverse('view_sales')}?{urlencode(query_params)}")
+
+
+@login_required
+@require_POST
+def delete_sales_for_date(request):
+    """Delete all sales recorded on a selected date and rebuild current stock."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to delete sales.')
+        return redirect('view_sales')
+
+    selected_date_raw = (request.POST.get('selected_date') or '').strip()
+    selected_salesperson_id = (request.POST.get('selected_salesperson_id') or '').strip()
+
+    if not selected_date_raw:
+        messages.error(request, 'Missing sale date for deletion.')
+        return redirect('view_sales')
+
+    try:
+        selected_date = datetime.strptime(selected_date_raw, '%Y-%m-%d').date()
+    except ValueError:
+        messages.error(request, 'Invalid sale date for deletion.')
+        return redirect('view_sales')
+
+    sales_qs = Sales.objects.filter(sale_date=selected_date)
+    sale_ids = list(sales_qs.values_list('id', flat=True))
+
+    if not sale_ids:
+        messages.warning(request, 'No sales records were found for the selected date.')
+    else:
+        touched_product_ids = list(sales_qs.values_list('product_id', flat=True))
+        deleted_entries = len(sale_ids)
+        deleted_units = sales_qs.aggregate(
+            total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+        )['total']
+
+        with transaction.atomic():
+            Sales.objects.filter(id__in=sale_ids).delete()
+            _recalculate_current_stock_for_products(touched_product_ids)
+
+        messages.success(
+            request,
+            f'Deleted all {deleted_entries} sales entries on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated.'
+        )
+
+    query_params = {'date': selected_date.isoformat()}
+    if selected_salesperson_id:
+        query_params['salesperson'] = selected_salesperson_id
 
     return redirect(f"{reverse('view_sales')}?{urlencode(query_params)}")
 
@@ -1848,6 +2274,10 @@ def get_next_sku(request):
 def _can_manage_operation_expense(user, expense):
     return user.is_staff or expense.created_by_id == user.id
 
+
+def _can_manage_operation_income(user, income):
+    return user.is_staff or income.created_by_id == user.id
+
 @login_required
 def quick_operations_entry(request):
     """Quick entry for dated operational expenses."""
@@ -1908,17 +2338,107 @@ def quick_operations_entry(request):
     day_revenue = Sales.objects.filter(sale_date=selected_date).aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
+    day_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    previous_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
 
     context = {
         'form': form,
         'selected_date': selected_date,
+        'previous_date': previous_date,
+        'next_date': next_date,
         'operations_entries': day_entries,
         'total_day_operation_cost': total_day_operation_cost,
         'day_revenue': day_revenue,
-        'day_net_after_operations': day_revenue - total_day_operation_cost,
+        'day_operation_income': day_operation_income,
+        'day_net_after_operations': day_revenue + day_operation_income - total_day_operation_cost,
         'edit_expense': edit_expense,
     }
     return render(request, 'inventory/quick_operations_entry.html', context)
+
+
+@login_required
+def quick_income_entry(request):
+    """Quick entry for dated operational income."""
+    selected_date_raw = request.GET.get('date')
+    if selected_date_raw:
+        try:
+            selected_date = datetime.fromisoformat(selected_date_raw).date()
+        except ValueError:
+            selected_date = timezone.now().date()
+    else:
+        selected_date = timezone.now().date()
+
+    edit_income = None
+    edit_id_raw = request.GET.get('edit')
+    if edit_id_raw:
+        try:
+            edit_income = OperationsIncome.objects.select_related('created_by').get(pk=int(edit_id_raw))
+        except (OperationsIncome.DoesNotExist, ValueError, TypeError):
+            edit_income = None
+            messages.error(request, 'Selected income entry was not found.')
+
+    if request.method == 'POST':
+        income_id = request.POST.get('income_id')
+        if income_id:
+            edit_income = get_object_or_404(OperationsIncome, pk=income_id)
+            if not _can_manage_operation_income(request.user, edit_income):
+                messages.error(request, 'You do not have permission to edit this income entry.')
+                return redirect(f"{request.path}?date={edit_income.income_date.isoformat()}")
+            form = OperationsIncomeForm(request.POST, instance=edit_income)
+        else:
+            form = OperationsIncomeForm(request.POST)
+
+        if form.is_valid():
+            income = form.save(commit=False)
+            if not income.created_by_id:
+                income.created_by = request.user
+            income.save()
+            if income_id:
+                messages.success(request, 'Income entry updated successfully.')
+            else:
+                messages.success(request, 'Income entry saved successfully.')
+            return redirect(f"{request.path}?date={income.income_date.isoformat()}")
+    else:
+        if edit_income:
+            if not _can_manage_operation_income(request.user, edit_income):
+                messages.error(request, 'You do not have permission to edit this income entry.')
+                return redirect(f"{request.path}?date={selected_date.isoformat()}")
+            selected_date = edit_income.income_date
+            form = OperationsIncomeForm(instance=edit_income)
+        else:
+            form = OperationsIncomeForm(initial={'income_date': selected_date})
+
+    income_entries = OperationsIncome.objects.filter(income_date=selected_date).select_related('created_by')
+    total_day_income = income_entries.aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    total_day_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    day_revenue = Sales.objects.filter(sale_date=selected_date).aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    previous_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
+
+    context = {
+        'form': form,
+        'selected_date': selected_date,
+        'previous_date': previous_date,
+        'next_date': next_date,
+        'income_entries': income_entries,
+        'total_day_income': total_day_income,
+        'total_day_operation_cost': total_day_operation_cost,
+        'day_revenue': day_revenue,
+        'day_net_after_operations': day_revenue + total_day_income - total_day_operation_cost,
+        'edit_income': edit_income,
+    }
+    return render(request, 'inventory/quick_income_entry.html', context)
 
 
 @login_required
@@ -1941,8 +2461,33 @@ def delete_operations_expense(request, expense_id):
 
 
 @login_required
+def delete_operation_income(request, income_id):
+    """Delete an operations income entry from quick income sheet."""
+    income = get_object_or_404(OperationsIncome, pk=income_id)
+    selected_date = request.POST.get('selected_date') or request.GET.get('date') or income.income_date.isoformat()
+
+    if request.method != 'POST':
+        messages.error(request, 'Invalid request method for deleting income entry.')
+        return redirect(f"{reverse('quick_income_entry')}?date={selected_date}")
+
+    if not _can_manage_operation_income(request.user, income):
+        messages.error(request, 'You do not have permission to delete this income entry.')
+        return redirect(f"{reverse('quick_income_entry')}?date={selected_date}")
+
+    income.delete()
+    messages.success(request, 'Income entry deleted successfully.')
+    return redirect(f"{reverse('quick_income_entry')}?date={selected_date}")
+
+
+@login_required
 def expenses_history(request):
     """Operations expenses history with optional date-range filter."""
+    context = _build_expenses_history_context(request)
+    return render(request, 'inventory/expenses_history.html', context)
+
+
+def _build_expenses_history_context(request):
+    """Build expenses history context using optional date-range filters."""
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
@@ -1981,7 +2526,192 @@ def expenses_history(request):
         'end_date': end_date,
         'total_operation_cost': total_operation_cost,
     }
-    return render(request, 'inventory/expenses_history.html', context)
+    return context
+
+
+@login_required
+def print_expenses_html(request):
+    """Print-friendly HTML for expenses history."""
+    context = _build_expenses_history_context(request)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_expenses.html', context)
+
+
+@login_required
+def print_expenses_pdf(request):
+    """Export expenses history as PDF."""
+    context = _build_expenses_history_context(request)
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        start_date = context['start_date']
+        end_date = context['end_date']
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="expenses_{start_date}_{end_date}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(
+            f"<b>Expenses Report - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}</b>",
+            styles['Title']
+        )
+        elements.append(title)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        elements.append(Paragraph(
+            f"<b>Total Operation Cost:</b> Rs.{context['total_operation_cost']:.2f}",
+            styles['Normal']
+        ))
+        elements.append(Spacer(1, 0.15 * inch))
+
+        data = [['Date', 'Details of Operation', 'Amount', 'Recorded By', 'Created At']]
+        for item in context['entries']:
+            recorded_by = (
+                item.created_by.get_full_name() or item.created_by.username
+                if item.created_by else '-'
+            )
+            data.append([
+                item.operation_date.strftime('%Y-%m-%d'),
+                item.details,
+                f"Rs.{item.amount:.2f}",
+                recorded_by,
+                timezone.localtime(item.created_at).strftime('%Y-%m-%d %H:%M'),
+            ])
+
+        table = Table(data, colWidths=[1.0 * inch, 2.2 * inch, 0.9 * inch, 1.3 * inch, 1.2 * inch], repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (1, 1), (1, -1), 'LEFT'),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),
+            ('ALIGN', (3, 1), (3, -1), 'LEFT'),
+            ('GRID', (0, 0), (-1, -1), 0.7, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('expenses_history')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('expenses_history')
+
+
+@login_required
+def print_expenses_excel(request):
+    """Export expenses history as Excel."""
+    context = _build_expenses_history_context(request)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        start_date = context['start_date']
+        end_date = context['end_date']
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Expenses Report'
+
+        ws.column_dimensions['A'].width = 14
+        ws.column_dimensions['B'].width = 40
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['D'].width = 24
+        ws.column_dimensions['E'].width = 20
+
+        ws['A1'] = f"EXPENSES REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = f"Total Operation Cost: Rs.{context['total_operation_cost']:.2f}"
+
+        headers = ['Date', 'Details of Operation', 'Amount', 'Recorded By', 'Created At']
+        header_row = 5
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=header_row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row = header_row + 1
+        for item in context['entries']:
+            recorded_by = (
+                item.created_by.get_full_name() or item.created_by.username
+                if item.created_by else '-'
+            )
+            ws.cell(row=row, column=1).value = item.operation_date.strftime('%Y-%m-%d')
+            ws.cell(row=row, column=2).value = item.details
+            ws.cell(row=row, column=3).value = float(item.amount)
+            ws.cell(row=row, column=4).value = recorded_by
+            ws.cell(row=row, column=5).value = timezone.localtime(item.created_at).strftime('%Y-%m-%d %H:%M')
+            ws.cell(row=row, column=3).number_format = '₹#,##0.00'
+            row += 1
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="expenses_{start_date}_{end_date}.xlsx"'
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('expenses_history')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('expenses_history')
+
+
+@login_required
+def print_expenses_csv(request):
+    """Export expenses history as CSV."""
+    context = _build_expenses_history_context(request)
+
+    start_date = context['start_date']
+    end_date = context['end_date']
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="expenses_{start_date}_{end_date}.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(['Expenses Report'])
+    writer.writerow(['Start Date', start_date.strftime('%Y-%m-%d')])
+    writer.writerow(['End Date', end_date.strftime('%Y-%m-%d')])
+    writer.writerow(['Total Operation Cost', f"{context['total_operation_cost']:.2f}"])
+    writer.writerow([])
+    writer.writerow(['Date', 'Details of Operation', 'Amount', 'Recorded By', 'Created At'])
+
+    for item in context['entries']:
+        recorded_by = (
+            item.created_by.get_full_name() or item.created_by.username
+            if item.created_by else '-'
+        )
+        writer.writerow([
+            item.operation_date.strftime('%Y-%m-%d'),
+            item.details,
+            f"{item.amount:.2f}",
+            recorded_by,
+            timezone.localtime(item.created_at).strftime('%Y-%m-%d %H:%M'),
+        ])
+
+    return response
 
 # ==================== REPORTS MODULE ====================
 
@@ -2072,11 +2802,13 @@ def _build_daily_report_context(selected_date):
     }
 
 
-def _build_weekly_report_context(start_date, end_date):
+def _build_weekly_report_context(start_date, end_date, salesperson=None):
     sales = Sales.objects.filter(
         sale_date__gte=start_date,
         sale_date__lte=end_date
-    ).select_related('product')
+    ).select_related('product', 'recorded_by')
+    if salesperson is not None:
+        sales = sales.filter(recorded_by=salesperson)
 
     total_revenue = sales.aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
@@ -2142,6 +2874,34 @@ def _build_weekly_report_context(start_date, end_date):
     }
 
 
+def _get_weekly_salesperson_filter_data(request):
+    """Return salespeople options and selected salesperson from request query params."""
+    selected_salesperson = None
+    selected_salesperson_id = (request.GET.get('salesperson') or '').strip()
+    salespeople = User.objects.filter(
+        is_active=True,
+        sales__isnull=False,
+    ).distinct().order_by('first_name', 'username')
+
+    if selected_salesperson_id:
+        try:
+            selected_salesperson = salespeople.get(pk=int(selected_salesperson_id))
+        except (User.DoesNotExist, ValueError, TypeError):
+            selected_salesperson = None
+            selected_salesperson_id = ''
+            messages.warning(request, 'Selected salesperson not found. Showing all salespersons.')
+
+    return salespeople, selected_salesperson, selected_salesperson_id
+
+
+def _get_current_week_date_range():
+    """Return current week date range (Monday to Sunday) based on today's date."""
+    today = timezone.now().date()
+    start_date = today - timedelta(days=today.weekday())
+    end_date = start_date + timedelta(days=6)
+    return start_date, end_date
+
+
 def _build_profit_report_context(start_date, end_date):
     sales = Sales.objects.filter(
         sale_date__gte=start_date,
@@ -2186,6 +2946,85 @@ def _build_profit_report_context(start_date, end_date):
         'total_profit': total_profit,
         'total_quantity': total_quantity,
         'products_profit': sorted_products,
+    }
+
+
+def _build_income_statement_context(start_date, end_date):
+    sales = Sales.objects.filter(
+        sale_date__gte=start_date,
+        sale_date__lte=end_date,
+    ).select_related('product')
+
+    operating_income_entries = OperationsIncome.objects.filter(
+        income_date__gte=start_date,
+        income_date__lte=end_date,
+    ).select_related('created_by').order_by('-income_date', '-created_at')
+
+    operating_expense_entries = OperationsExpense.objects.filter(
+        operation_date__gte=start_date,
+        operation_date__lte=end_date,
+    ).select_related('created_by').order_by('-operation_date', '-created_at')
+
+    sales_revenue = sales.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    cost_of_goods_sold = sum(
+        Decimal(sale.quantity) * sale.product.cost_price for sale in sales
+    )
+
+    gross_profit = sales_revenue - cost_of_goods_sold
+
+    operating_income_total = operating_income_entries.aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    operating_expense_total = operating_expense_entries.aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    net_profit_before_tax = gross_profit + operating_income_total - operating_expense_total
+
+    sales_by_product = {}
+    for sale in sales:
+        product_name = normalize_sales_product_name(sale.product.name)
+        if product_name not in sales_by_product:
+            sales_by_product[product_name] = {
+                'product_name': product_name,
+                'quantity': 0,
+                'revenue': Decimal('0.0'),
+                'cost': Decimal('0.0'),
+            }
+
+        sales_by_product[product_name]['quantity'] += sale.quantity
+        sales_by_product[product_name]['revenue'] += sale.total_price
+        sales_by_product[product_name]['cost'] += Decimal(sale.quantity) * sale.product.cost_price
+
+    sales_breakdown = []
+    for row in sales_by_product.values():
+        row['gross_profit'] = row['revenue'] - row['cost']
+        sales_breakdown.append(row)
+
+    sales_breakdown.sort(key=lambda row: row['product_name'])
+
+    gross_margin = (gross_profit / sales_revenue) * 100 if sales_revenue else Decimal('0.0')
+    net_margin = (net_profit_before_tax / sales_revenue) * 100 if sales_revenue else Decimal('0.0')
+
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'sales_revenue': sales_revenue,
+        'cost_of_goods_sold': cost_of_goods_sold,
+        'gross_profit': gross_profit,
+        'operating_income_total': operating_income_total,
+        'operating_expense_total': operating_expense_total,
+        'net_profit_before_tax': net_profit_before_tax,
+        'gross_margin': gross_margin,
+        'net_margin': net_margin,
+        'sales_breakdown': sales_breakdown,
+        'operating_income_entries': operating_income_entries,
+        'operating_expense_entries': operating_expense_entries,
+        'sales_transaction_count': sales.count(),
     }
 
 
@@ -2328,7 +3167,13 @@ def weekly_report(request):
     else:
         end_date = datetime.fromisoformat(end_date).date()
     
-    context = _build_weekly_report_context(start_date, end_date)
+    salespeople, selected_salesperson, selected_salesperson_id = _get_weekly_salesperson_filter_data(request)
+    context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
+    context.update({
+        'salespeople': salespeople,
+        'selected_salesperson': selected_salesperson,
+        'selected_salesperson_id': selected_salesperson_id,
+    })
     
     return render(request, 'inventory/weekly_report.html', context)
 
@@ -2352,6 +3197,37 @@ def profit_report(request):
     context = _build_profit_report_context(start_date, end_date)
     
     return render(request, 'inventory/profit_report.html', context)
+
+
+@login_required
+def income_statement(request):
+    """Income Statement (Profit and Loss Statement) for a selected date range."""
+    default_start_date, default_end_date = _get_current_week_date_range()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = default_start_date
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date).date()
+        except ValueError:
+            start_date = default_start_date
+
+    if not end_date:
+        end_date = default_end_date
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            end_date = default_end_date
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+
+    context = _build_income_statement_context(start_date, end_date)
+    return render(request, 'inventory/income_statement.html', context)
 
 
 @login_required
@@ -2878,7 +3754,10 @@ def print_weekly_report_html(request):
     else:
         end_date = datetime.fromisoformat(end_date).date()
 
-    context = _build_weekly_report_context(start_date, end_date)
+    _, selected_salesperson, selected_salesperson_id = _get_weekly_salesperson_filter_data(request)
+    context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
+    context['selected_salesperson'] = selected_salesperson
+    context['selected_salesperson_id'] = selected_salesperson_id
     context['now'] = timezone.now()
     return render(request, 'inventory/print_weekly_report.html', context)
 
@@ -2899,7 +3778,8 @@ def print_weekly_report_pdf(request):
     else:
         end_date = datetime.fromisoformat(end_date).date()
 
-    context = _build_weekly_report_context(start_date, end_date)
+    _, selected_salesperson, _ = _get_weekly_salesperson_filter_data(request)
+    context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
 
     try:
         from reportlab.lib.pagesizes import A4
@@ -2933,6 +3813,9 @@ def print_weekly_report_pdf(request):
             f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
             f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
         )
+        if selected_salesperson is not None:
+            salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
+            summary = f"{summary} | <b>Salesperson:</b> {salesperson_name}"
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
 
@@ -3008,7 +3891,8 @@ def print_weekly_report_excel(request):
     else:
         end_date = datetime.fromisoformat(end_date).date()
 
-    context = _build_weekly_report_context(start_date, end_date)
+    _, selected_salesperson, _ = _get_weekly_salesperson_filter_data(request)
+    context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
 
     try:
         from openpyxl import Workbook
@@ -3027,6 +3911,10 @@ def print_weekly_report_excel(request):
 
         ws['A1'] = f"WEEKLY REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
+
+        if selected_salesperson is not None:
+            salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
+            ws['A2'] = f"Salesperson: {salesperson_name}"
 
         ws['A3'] = f"Transactions: {context['total_transactions']}"
         ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
@@ -3266,6 +4154,239 @@ def print_profit_report_excel(request):
         messages.error(request, f'Error generating Excel: {str(e)}')
         return redirect('profit_report')
 
+
+@login_required
+def print_income_statement_html(request):
+    default_start_date, default_end_date = _get_current_week_date_range()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = default_start_date
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date).date()
+        except ValueError:
+            start_date = default_start_date
+
+    if not end_date:
+        end_date = default_end_date
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            end_date = default_end_date
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_income_statement_context(start_date, end_date)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_income_statement.html', context)
+
+
+@login_required
+def print_income_statement_pdf(request):
+    default_start_date, default_end_date = _get_current_week_date_range()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = default_start_date
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date).date()
+        except ValueError:
+            start_date = default_start_date
+
+    if not end_date:
+        end_date = default_end_date
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            end_date = default_end_date
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_income_statement_context(start_date, end_date)
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = (
+            f'attachment; filename="income_statement_{start_date}_{end_date}.pdf"'
+        )
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        logo_path = _get_report_logo_path()
+        if logo_path:
+            elements.append(Image(logo_path, width=0.9 * inch, height=0.9 * inch, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.12 * inch))
+
+        title = Paragraph(
+            f"<b>Income Statement - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}</b>",
+            styles['Title']
+        )
+        elements.append(title)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        summary_lines = [
+            ['Sales Revenue', f"Rs.{context['sales_revenue']:.2f}"],
+            ['Cost of Goods Sold (COGS)', f"Rs.{context['cost_of_goods_sold']:.2f}"],
+            ['Gross Profit', f"Rs.{context['gross_profit']:.2f}"],
+            ['Other Operating Income', f"Rs.{context['operating_income_total']:.2f}"],
+            ['Operating Expenses', f"Rs.{context['operating_expense_total']:.2f}"],
+            ['Net Profit (Before Tax)', f"Rs.{context['net_profit_before_tax']:.2f}"],
+        ]
+        summary_table = Table(summary_lines, colWidths=[3.4 * inch, 2.0 * inch])
+        summary_table.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('BACKGROUND', (0, 2), (-1, 2), colors.lightgrey),
+            ('BACKGROUND', (0, 5), (-1, 5), colors.lightgrey),
+            ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 5), (-1, 5), 'Helvetica-Bold'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ]))
+        elements.append(summary_table)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        elements.append(Paragraph('<b>Sales Breakdown (By Product)</b>', styles['Heading3']))
+        data = [['Product', 'Qty', 'Revenue', 'COGS', 'Gross Profit']]
+        for row in context['sales_breakdown']:
+            data.append([
+                row['product_name'],
+                str(row['quantity']),
+                f"Rs.{row['revenue']:.2f}",
+                f"Rs.{row['cost']:.2f}",
+                f"Rs.{row['gross_profit']:.2f}",
+            ])
+
+        table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.1 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(table)
+
+        doc.build(elements)
+        return response
+    except ImportError as e:
+        messages.error(request, f'PDF generation not available. Please install reportlab: {str(e)}')
+        return redirect('income_statement')
+    except Exception as e:
+        messages.error(request, f'Error generating PDF: {str(e)}')
+        return redirect('income_statement')
+
+
+@login_required
+def print_income_statement_excel(request):
+    default_start_date, default_end_date = _get_current_week_date_range()
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if not start_date:
+        start_date = default_start_date
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date).date()
+        except ValueError:
+            start_date = default_start_date
+
+    if not end_date:
+        end_date = default_end_date
+    else:
+        try:
+            end_date = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            end_date = default_end_date
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    context = _build_income_statement_context(start_date, end_date)
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Income Statement'
+
+        ws.column_dimensions['A'].width = 34
+        ws.column_dimensions['B'].width = 14
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['D'].width = 14
+        ws.column_dimensions['E'].width = 16
+
+        ws['A1'] = f"INCOME STATEMENT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
+        ws['A1'].font = Font(bold=True, size=14)
+
+        ws['A3'] = 'Sales Revenue'
+        ws['B3'] = float(context['sales_revenue'])
+        ws['A4'] = 'Cost of Goods Sold (COGS)'
+        ws['B4'] = float(context['cost_of_goods_sold'])
+        ws['A5'] = 'Gross Profit'
+        ws['B5'] = float(context['gross_profit'])
+        ws['A6'] = 'Other Operating Income'
+        ws['B6'] = float(context['operating_income_total'])
+        ws['A7'] = 'Operating Expenses'
+        ws['B7'] = float(context['operating_expense_total'])
+        ws['A8'] = 'Net Profit (Before Tax)'
+        ws['B8'] = float(context['net_profit_before_tax'])
+
+        for cell_ref in ['A5', 'B5', 'A8', 'B8']:
+            ws[cell_ref].font = Font(bold=True)
+
+        ws['A10'] = 'Sales Breakdown (By Product)'
+        ws['A10'].font = Font(bold=True)
+
+        headers = ['Product', 'Qty Sold', 'Revenue', 'COGS', 'Gross Profit']
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=11, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+
+        row_idx = 12
+        for row in context['sales_breakdown']:
+            ws.cell(row=row_idx, column=1).value = row['product_name']
+            ws.cell(row=row_idx, column=2).value = int(row['quantity'])
+            ws.cell(row=row_idx, column=3).value = float(row['revenue'])
+            ws.cell(row=row_idx, column=4).value = float(row['cost'])
+            ws.cell(row=row_idx, column=5).value = float(row['gross_profit'])
+            row_idx += 1
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = (
+            f'attachment; filename="income_statement_{start_date}_{end_date}.xlsx"'
+        )
+        wb.save(response)
+        return response
+    except ImportError as e:
+        messages.error(request, f'Excel generation not available. Please install openpyxl: {str(e)}')
+        return redirect('income_statement')
+    except Exception as e:
+        messages.error(request, f'Error generating Excel: {str(e)}')
+        return redirect('income_statement')
+
 # ==================== USER MANAGEMENT ====================
 
 @login_required
@@ -3329,6 +4450,86 @@ def delete_user(request, user_id):
 
 # ==================== PRINT MODULE ====================
 
+def _build_daily_data_sheet_print_context(request):
+    """Build print context for Daily Sales Sheet with stock taken and balance columns."""
+    selected_sales_date_raw = request.GET.get('sales_date') or request.GET.get('date')
+    if selected_sales_date_raw:
+        try:
+            selected_sales_date = datetime.strptime(selected_sales_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_sales_date = timezone.now().date()
+    else:
+        selected_sales_date = timezone.now().date()
+
+    target_user = request.user
+    if request.user.is_staff:
+        salesperson_id_raw = (request.GET.get('salesperson') or '').strip()
+        if salesperson_id_raw:
+            try:
+                target_user = User.objects.get(pk=int(salesperson_id_raw), is_active=True)
+            except (User.DoesNotExist, ValueError, TypeError):
+                target_user = request.user
+
+    products = build_grouped_products_for_sales_date(selected_sales_date)
+
+    current_grouped_products = group_active_products_by_name()
+    for product in products:
+        candidates = current_grouped_products.get(product['key'], [])
+        product['stock'] = sum(max(0, item.current_stock) for item in candidates)
+
+    stock_taken_map = {
+        item.product_key: item.stock_taken_count
+        for item in SalesStockTaken.objects.filter(
+            salesperson=target_user,
+            sales_date=selected_sales_date,
+        )
+    }
+
+    sales_count_map = defaultdict(int)
+    user_sales_qs = Sales.objects.filter(
+        sale_date=selected_sales_date,
+        recorded_by=target_user,
+    ).select_related('product')
+    for sale in user_sales_qs:
+        key = normalize_sales_product_name(sale.product.name).lower()
+        sales_count_map[key] += sale.quantity
+
+    total_stock_taken_for_date = 0
+    total_sales_count = 0
+    total_estimated_total = Decimal('0.0')
+
+    for product in products:
+        stock_taken_count = stock_taken_map.get(product['key'], 0)
+        sales_count = sales_count_map.get(product['key'], 0)
+        balance_count = stock_taken_count - sales_count
+        estimated_total = product['avg_price'] * Decimal(sales_count)
+
+        product['stock_taken_count'] = stock_taken_count
+        product['sales_count'] = sales_count
+        product['balance_count'] = balance_count
+        product['estimated_total'] = estimated_total
+
+        total_stock_taken_for_date += stock_taken_count
+        total_sales_count += sales_count
+        total_estimated_total += estimated_total
+
+    return {
+        'selected_sales_date': selected_sales_date,
+        'target_user': target_user,
+        'products': products,
+        'total_stock_taken_for_date': total_stock_taken_for_date,
+        'total_sales_count': total_sales_count,
+        'total_estimated_total': total_estimated_total,
+    }
+
+
+@login_required
+def print_daily_data_sheet_html(request):
+    """Print-friendly Daily Data Sheet view for salespersons."""
+    context = _build_daily_data_sheet_print_context(request)
+    context['now'] = timezone.now()
+    return render(request, 'inventory/print_daily_data_sheet.html', context)
+
 @login_required
 def print_sales_html(request):
     """Print sales in HTML format (browser print-friendly)"""
@@ -3342,7 +4543,9 @@ def print_sales_html(request):
             selected_date = timezone.now().date()
 
     salesperson_filter = None
-    if selected_salesperson_id:
+    if not request.user.is_staff:
+        salesperson_filter = request.user
+    elif selected_salesperson_id:
         try:
             salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
         except (ValueError, User.DoesNotExist):
@@ -3389,7 +4592,9 @@ def print_sales_pdf(request):
             selected_date = timezone.now().date()
 
     salesperson_filter = None
-    if selected_salesperson_id:
+    if not request.user.is_staff:
+        salesperson_filter = request.user
+    elif selected_salesperson_id:
         try:
             salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
         except (ValueError, User.DoesNotExist):
@@ -3485,6 +4690,128 @@ def print_sales_pdf(request):
         messages.error(request, f'Error generating PDF: {str(e)}')
         return redirect('view_sales')
 
+
+@login_required
+def print_sales_jpeg(request):
+    """Export sales as JPEG image."""
+    selected_date = request.GET.get('date', timezone.now().date().isoformat())
+    selected_salesperson_id = request.GET.get('salesperson', '').strip()
+
+    if isinstance(selected_date, str):
+        try:
+            selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = timezone.now().date()
+
+    salesperson_filter = None
+    if not request.user.is_staff:
+        salesperson_filter = request.user
+    elif selected_salesperson_id:
+        try:
+            salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
+            selected_salesperson_id = ''
+
+    daily_sales_qs = Sales.objects.filter(sale_date=selected_date)
+    if salesperson_filter:
+        daily_sales_qs = daily_sales_qs.filter(recorded_by=salesperson_filter)
+    daily_sales_qs = daily_sales_qs.select_related('product', 'recorded_by').order_by('product__sku')
+    daily_sales = build_sales_groups(daily_sales_qs)
+
+    total_quantity = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+    total_revenue = daily_sales_qs.aggregate(
+        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+    )['total']
+
+    redirect_target = 'view_sales' if request.user.is_staff else 'quick_sales_entry'
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        left = 40
+        row_h = 34
+        img_width = 1700
+        header_top = 30
+        table_top = 230
+        cols = [620, 130, 190, 210, 470]
+        table_width = sum(cols)
+
+        row_count = max(1, len(daily_sales))
+        img_height = table_top + ((row_count + 2) * row_h) + 60
+
+        image = Image.new('RGB', (img_width, img_height), 'white')
+        draw = ImageDraw.Draw(image)
+
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+
+        draw.text((left, header_top), 'DAILY SALES SHEET', fill=(87, 40, 9), font=title_font)
+        draw.text((left, header_top + 30), f'Date: {selected_date.strftime("%Y-%m-%d")}', fill=(50, 50, 50), font=body_font)
+
+        if salesperson_filter:
+            salesperson_name = salesperson_filter.get_full_name() or salesperson_filter.username
+            draw.text((left, header_top + 55), f'Salesperson: {salesperson_name}', fill=(50, 50, 50), font=body_font)
+
+        summary_text = (
+            f'Total Sales: {len(daily_sales)}    '
+            f'Total Quantity: {total_quantity}    '
+            f'Total Revenue: Rs.{total_revenue:,.2f}'
+        )
+        draw.text((left, header_top + 85), summary_text, fill=(40, 40, 40), font=body_font)
+
+        headers = ['Product Name', 'Qty', 'Unit Price', 'Total Price', 'Recorded By']
+
+        x = left
+        for i, header in enumerate(headers):
+            draw.rectangle([(x, table_top), (x + cols[i], table_top + row_h)], fill=(87, 40, 9))
+            draw.text((x + 8, table_top + 10), header, fill='white', font=body_font)
+            x += cols[i]
+
+        current_y = table_top + row_h
+        if daily_sales:
+            for sale in daily_sales:
+                values = [
+                    sale['product_name'],
+                    str(sale['quantity']),
+                    f"Rs.{sale['unit_price']:.2f}",
+                    f"Rs.{sale['total_price']:.2f}",
+                    sale['recorded_by'],
+                ]
+                x = left
+                for i, value in enumerate(values):
+                    draw.rectangle([(x, current_y), (x + cols[i], current_y + row_h)], outline=(180, 180, 180), width=1)
+                    draw.text((x + 8, current_y + 10), str(value), fill=(30, 30, 30), font=body_font)
+                    x += cols[i]
+                current_y += row_h
+        else:
+            draw.rectangle([(left, current_y), (left + table_width, current_y + row_h)], outline=(180, 180, 180), width=1)
+            draw.text((left + 8, current_y + 10), 'No sales found for selected date.', fill=(120, 120, 120), font=body_font)
+            current_y += row_h
+
+        totals_values = ['TOTAL', str(total_quantity), '', f"Rs.{total_revenue:.2f}", '']
+        x = left
+        for i, value in enumerate(totals_values):
+            draw.rectangle([(x, current_y), (x + cols[i], current_y + row_h)], fill=(242, 232, 219), outline=(170, 170, 170), width=1)
+            draw.text((x + 8, current_y + 10), str(value), fill=(40, 40, 40), font=body_font)
+            x += cols[i]
+
+        image_bytes = io.BytesIO()
+        image.save(image_bytes, format='JPEG', quality=92)
+        image_bytes.seek(0)
+
+        response = HttpResponse(image_bytes.getvalue(), content_type='image/jpeg')
+        response['Content-Disposition'] = f'attachment; filename="sales_{selected_date}.jpg"'
+        return response
+
+    except ImportError as e:
+        messages.error(request, f'JPEG generation not available. Please install Pillow: {str(e)}')
+        return redirect(redirect_target)
+    except Exception as e:
+        messages.error(request, f'Error generating JPEG: {str(e)}')
+        return redirect(redirect_target)
+
 @login_required
 def print_sales_excel(request):
     """Export sales as Excel"""
@@ -3498,7 +4825,9 @@ def print_sales_excel(request):
             selected_date = timezone.now().date()
 
     salesperson_filter = None
-    if selected_salesperson_id:
+    if not request.user.is_staff:
+        salesperson_filter = request.user
+    elif selected_salesperson_id:
         try:
             salesperson_filter = User.objects.get(pk=int(selected_salesperson_id))
         except (ValueError, User.DoesNotExist):

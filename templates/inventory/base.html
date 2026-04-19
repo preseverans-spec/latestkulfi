@@ -376,6 +376,9 @@
                         <a href="{% url 'quick_operations_entry' %}" class="sub-item {% if request.resolver_match.url_name == 'quick_operations_entry' %}active{% endif %}">
                             <i class="fas fa-bolt"></i> Quick Operations Entry
                         </a>
+                        <a href="{% url 'quick_income_entry' %}" class="sub-item {% if request.resolver_match.url_name == 'quick_income_entry' %}active{% endif %}">
+                            <i class="fas fa-coins"></i> Quick Income Entry
+                        </a>
                         <a href="{% url 'expenses_history' %}" class="sub-item {% if request.resolver_match.url_name == 'expenses_history' %}active{% endif %}">
                             <i class="fas fa-calendar-alt"></i> View Expenses
                         </a>
@@ -395,6 +398,9 @@
                         </a>
                         <a href="{% url 'profit_report' %}" class="sub-item {% if request.resolver_match.url_name == 'profit_report' %}active{% endif %}">
                             <i class="fas fa-chart-pie"></i> Profit Report
+                        </a>
+                        <a href="{% url 'income_statement' %}" class="sub-item {% if request.resolver_match.url_name == 'income_statement' %}active{% endif %}">
+                            <i class="fas fa-file-invoice-dollar"></i> Income Statement
                         </a>
                         <a href="{% url 'stock_report' %}" class="sub-item {% if request.resolver_match.url_name == 'stock_report' %}active{% endif %}">
                             <i class="fas fa-boxes"></i> Stock Report

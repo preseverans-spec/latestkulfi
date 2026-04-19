@@ -17,6 +17,14 @@
     border-color: #ced4da;
     box-shadow: none;
 }
+
+/* Flag stock taken values above combined stock for quick correction. */
+.stock-taken-input.over-combined-stock {
+    background-color: #f8d7da;
+    border-color: #dc3545;
+    color: #842029;
+}
+
 </style>
 
 <h1 class="page-title"><i class="fas fa-bolt"></i> Daily Sales Sheet</h1>
@@ -72,6 +80,9 @@
                             <th>Stock Taken Count</th>
                             {% endif %}
                             <th>Sales Count</th>
+                            {% if not user.is_staff %}
+                            <th>Balance Count</th>
+                            {% endif %}
                             <th>Estimated Total</th>
                         </tr>
                     </thead>
@@ -90,12 +101,17 @@
                             <td>{{ product.stock }}</td>
                             {% if not user.is_staff %}
                             <td>
-                                <input type="number" name="stock_taken_count[]" min="0" value="{{ product.stock_taken_count }}" class="form-control stock-taken-input zero-clear-input" style="max-width: 120px;">
+                                <input type="number" name="stock_taken_count[]" min="0" value="{{ product.stock_taken_count }}" class="form-control stock-taken-input zero-clear-input" data-stock="{{ product.stock }}" style="max-width: 120px;">
                             </td>
                             {% endif %}
                             <td>
                                 <input type="number" name="quantity[]" min="0" value="{{ product.prefill_quantity|default:0 }}" class="form-control quantity-input zero-clear-input" data-stock="{{ product.stock }}" style="max-width: 120px;">
                             </td>
+                            {% if not user.is_staff %}
+                            <td>
+                                <span class="balance-count">0</span>
+                            </td>
+                            {% endif %}
                             <td>
                                 <span class="total-price">₹0.00</span>
                             </td>
@@ -109,29 +125,48 @@
             <div class="mt-3">
                 <div class="row g-2">
                     {% if not user.is_staff %}
-                    <div class="col-md-3">
+                    <div class="col-md-6 col-lg-2">
                         <div class="alert alert-secondary py-2 mb-0">
                             <strong>Total Stock Taken:</strong> <span id="summary-total-stock-taken">{{ total_stock_taken_for_date }}</span>
                         </div>
                     </div>
-                    <div class="col-md-3">
-                    {% else %}
-                    <div class="col-md-4">
-                    {% endif %}
+                    <div class="col-md-6 col-lg-2">
                         <div class="alert alert-info py-2 mb-0">
                             <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
                         </div>
                     </div>
-                    <div class="col-md-{% if user.is_staff %}4{% else %}3{% endif %}">
+                    <div class="col-md-6 col-lg-2">
                         <div class="alert alert-success py-2 mb-0">
                             <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
                         </div>
                     </div>
-                    <div class="col-md-{% if user.is_staff %}4{% else %}3{% endif %}">
+                    <div class="col-md-6 col-lg-3">
+                        <div class="alert alert-primary py-2 mb-0">
+                            <strong>Total Balance Count:</strong> <span id="summary-balance-count">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-12 col-lg-3">
                         <div class="alert alert-warning py-2 mb-0">
                             <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
                         </div>
                     </div>
+                    {% else %}
+                    <div class="col-md-4">
+                        <div class="alert alert-info py-2 mb-0">
+                            <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-success py-2 mb-0">
+                            <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-warning py-2 mb-0">
+                            <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -226,6 +261,15 @@ document.addEventListener('DOMContentLoaded', function() {
             if (isNaN(val) || val < 0) {
                 stockTakenInput.value = 0;
             }
+
+            const currentValue = parseInt(stockTakenInput.value, 10) || 0;
+            const combinedStock = Math.max(0, parseInt(stockTakenInput.dataset.stock || '0', 10) || 0);
+            if (currentValue > combinedStock) {
+                stockTakenInput.classList.add('over-combined-stock');
+            } else {
+                stockTakenInput.classList.remove('over-combined-stock');
+            }
+
             updateSummary();
         }
 
@@ -245,14 +289,22 @@ document.addEventListener('DOMContentLoaded', function() {
         let totalPrice = 0;
         let salesCount = 0;
         let totalStockTaken = 0;
+        let totalBalanceCount = 0;
 
         document.querySelectorAll('tbody tr').forEach(function(row) {
             const quantity = parseInt(row.querySelector('.quantity-input').value, 10) || 0;
             const stockTakenInput = row.querySelector('.stock-taken-input');
             const stockTaken = stockTakenInput ? (parseInt(stockTakenInput.value, 10) || 0) : 0;
+            const balanceCount = stockTaken - quantity;
+            const balanceLabel = row.querySelector('.balance-count');
+            if (balanceLabel) {
+                balanceLabel.textContent = balanceCount;
+                balanceLabel.classList.toggle('text-danger', balanceCount < 0);
+            }
             const rowPrice = parseFloat(row.querySelector('.total-price').textContent.replace('₹', '')) || 0;
 
             totalStockTaken += stockTaken;
+            totalBalanceCount += balanceCount;
 
             if (quantity > 0) {
                 salesCount += 1;
@@ -268,6 +320,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (summaryTotalStockTaken) {
             summaryTotalStockTaken.textContent = totalStockTaken;
+        }
+        const summaryBalanceCount = document.getElementById('summary-balance-count');
+        if (summaryBalanceCount) {
+            summaryBalanceCount.textContent = totalBalanceCount;
+            summaryBalanceCount.classList.toggle('text-danger', totalBalanceCount < 0);
         }
         document.getElementById('summary-total-items').textContent = totalItems;
         document.getElementById('summary-sales-count').textContent = salesCount;

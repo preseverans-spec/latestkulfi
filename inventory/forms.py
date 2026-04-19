@@ -3,7 +3,7 @@ import re
 from django import forms
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import Product, Sales, OperationsExpense
+from .models import Product, Sales, OperationsExpense, OperationsIncome
 
 
 class ProductForm(forms.ModelForm):
@@ -155,6 +155,21 @@ class OperationsExpenseForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['operation_date'].initial = timezone.now().date()
+
+
+class OperationsIncomeForm(forms.ModelForm):
+    class Meta:
+        model = OperationsIncome
+        fields = ['income_date', 'details', 'amount']
+        widgets = {
+            'income_date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
+            'details': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Income source details'}),
+            'amount': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Amount', 'step': '0.01', 'min': '0'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['income_date'].initial = timezone.now().date()
 
 class UserManagementForm(forms.ModelForm):
     password = forms.CharField(

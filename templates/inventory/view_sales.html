@@ -114,6 +114,14 @@
                 </h5>
                 <div class="d-flex gap-2">
                     {% if daily_sales %}
+                    <form method="POST" action="{% url 'delete_sales_for_date' %}" class="d-inline" onsubmit="return confirm('Delete all sales recorded on {{ selected_date|date:'Y-m-d' }} and recalculate inventory?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="selected_salesperson_id" value="{{ selected_salesperson_id }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete all sales for this date">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </form>
                     <div class="btn-group" role="group">
                         <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="fas fa-print"></i> Print
@@ -140,6 +148,20 @@
                 </div>
             </div>
             <div class="card-body">
+                {% if restored_units > 0 %}
+                <div class="alert alert-success d-flex align-items-center justify-content-between" role="alert">
+                    <span>
+                        <i class="fas fa-check-circle"></i>
+                        Restored <strong>{{ restored_units }}</strong> units to stock
+                        {% if restored_product %}
+                            for <strong>{{ restored_product }}</strong>
+                        {% endif %}
+                        .
+                    </span>
+                    <span class="badge bg-success">Stock Updated</span>
+                </div>
+                {% endif %}
+
                 {% if not date_submitted %}
                     <div class="text-center py-5">
                         <i class="fas fa-calendar-day fa-3x text-muted mb-3"></i>
@@ -147,20 +169,6 @@
                         <p class="text-muted">Choose a date above and click <strong>View Sales</strong> to see the sales records.</p>
                     </div>
                 {% elif daily_sales %}
-                    {% if restored_units > 0 %}
-                    <div class="alert alert-success d-flex align-items-center justify-content-between" role="alert">
-                        <span>
-                            <i class="fas fa-check-circle"></i>
-                            Restored <strong>{{ restored_units }}</strong> units to stock
-                            {% if restored_product %}
-                                for <strong>{{ restored_product }}</strong>
-                            {% endif %}
-                            .
-                        </span>
-                        <span class="badge bg-success">Stock Updated</span>
-                    </div>
-                    {% endif %}
-
                     <!-- Summary Cards -->
                     <div class="row mb-4">
                         <div class="col-md-4">
@@ -221,7 +229,7 @@
                                         {% endif %}
                                     </td>
                                     <td class="text-center">
-                                        <form method="POST" action="{% url 'delete_grouped_sale' %}" class="d-inline" onsubmit="return confirm('Delete sales for {{ sale.product_name|escapejs }} and restore stock?');">
+                                        <form method="POST" action="{% url 'delete_grouped_sale' %}" class="d-inline" onsubmit="return confirm('Delete sales for {{ sale.product_name|escapejs }} and recalculate inventory?');">
                                             {% csrf_token %}
                                             <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
                                             <input type="hidden" name="selected_salesperson_id" value="{{ selected_salesperson_id }}">

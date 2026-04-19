@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, DailySalesReport, WeeklyReport, ProfitReport
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
@@ -59,6 +59,14 @@ class SalesStockTakenAdmin(admin.ModelAdmin):
 class OperationsExpenseAdmin(admin.ModelAdmin):
     list_display = ('operation_date', 'details', 'amount', 'created_by', 'created_at')
     list_filter = ('operation_date', 'created_at', 'created_by')
+    search_fields = ('details',)
+    readonly_fields = ('created_at',)
+
+
+@admin.register(OperationsIncome)
+class OperationsIncomeAdmin(admin.ModelAdmin):
+    list_display = ('income_date', 'details', 'amount', 'created_by', 'created_at')
+    list_filter = ('income_date', 'created_at', 'created_by')
     search_fields = ('details',)
     readonly_fields = ('created_at',)
 

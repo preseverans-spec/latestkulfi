@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Weekly Report - {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</title>
+    <title>Income Statement - {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</title>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #333; font-size: 13px; }
-        .container { max-width: 980px; margin: 0 auto; }
+        .container { max-width: 1020px; margin: 0 auto; }
         .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #333; padding-bottom: 12px; }
         .report-logo { width: 72px; height: 72px; object-fit: contain; margin: 0 auto 8px; display: block; }
-        .header h2 { margin: 0 0 6px; letter-spacing: 1px; }
         .header h1 { margin: 0; font-size: 24px; }
         .summary { display: flex; gap: 10px; margin: 16px 0; }
         .summary-item { flex: 1; background: #f5f5f5; border-radius: 4px; padding: 10px; text-align: center; }
@@ -18,7 +17,7 @@
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
         th, td { border: 1px solid #ddd; padding: 9px 11px; font-size: 12px; }
         thead { background: #572809; color: #fff; }
-        .section-title { margin-top: 18px; margin-bottom: 8px; }
+        .section-title { margin-top: 22px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
         .no-print { text-align: right; margin-bottom: 12px; }
         .no-print button { border: 0; background: #572809; color: #fff; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
         .footer { margin-top: 16px; font-size: 11px; color: #888; text-align: center; }
@@ -49,49 +48,46 @@
 
     <div class="header">
         <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="report-logo">
-        <h1>WEEKLY REPORT</h1>
+        <h1>INCOME STATEMENT</h1>
         <p>Period: {{ start_date|date:'d M Y' }} to {{ end_date|date:'d M Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
-        {% if selected_salesperson %}
-        <p>Salesperson: {{ selected_salesperson.get_full_name|default:selected_salesperson.username }}</p>
-        {% endif %}
     </div>
 
     <div class="summary">
-        <div class="summary-item"><div class="label">Transactions</div><div class="value">{{ total_transactions }}</div></div>
-        <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Cost</div><div class="value">Rs.{{ total_cost|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Profit</div><div class="value">Rs.{{ total_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Sales Revenue</div><div class="value">Rs.{{ sales_revenue|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Gross Profit</div><div class="value">Rs.{{ gross_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Operating Expense</div><div class="value">Rs.{{ operating_expense_total|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Net Profit</div><div class="value">Rs.{{ net_profit_before_tax|floatformat:2 }}</div></div>
     </div>
 
-    <h3 class="section-title">Daily Breakdown</h3>
+    <div class="section-title">Profit and Loss Summary</div>
     <table>
-        <thead><tr><th>Date</th><th>Transactions</th><th>Quantity Sold</th><th>Revenue</th></tr></thead>
         <tbody>
-        {% for day, row in daily_data.items %}
-        <tr><td>{{ day }}</td><td>{{ row.count }}</td><td>{{ row.quantity|floatformat:0 }}</td><td>Rs.{{ row.revenue|floatformat:2 }}</td></tr>
-        {% endfor %}
+            <tr><th>Sales Revenue</th><td>Rs.{{ sales_revenue|floatformat:2 }}</td></tr>
+            <tr><th>Cost of Goods Sold (COGS)</th><td>Rs.{{ cost_of_goods_sold|floatformat:2 }}</td></tr>
+            <tr><th>Gross Profit</th><td>Rs.{{ gross_profit|floatformat:2 }}</td></tr>
+            <tr><th>Add: Other Operating Income</th><td>Rs.{{ operating_income_total|floatformat:2 }}</td></tr>
+            <tr><th>Less: Operating Expenses</th><td>Rs.{{ operating_expense_total|floatformat:2 }}</td></tr>
+            <tr><th>Net Profit (Before Tax)</th><td>Rs.{{ net_profit_before_tax|floatformat:2 }}</td></tr>
         </tbody>
     </table>
 
-    <h3 class="section-title">Product-wise Breakdown</h3>
+    <div class="section-title">Sales Breakdown (By Product)</div>
     <table>
         <thead>
-        <tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin</th></tr>
+            <tr><th>Product</th><th>Qty Sold</th><th>Revenue</th><th>COGS</th><th>Gross Profit</th></tr>
         </thead>
         <tbody>
-        {% for item in weekly_product_breakdown %}
-        <tr>
-            <td>{{ item.product_name }}</td>
-            <td>{{ item.quantity }}</td>
-            <td>Rs.{{ item.unit_price|floatformat:2 }}</td>
-            <td>Rs.{{ item.revenue|floatformat:2 }}</td>
-            <td>Rs.{{ item.cost|floatformat:2 }}</td>
-            <td>Rs.{{ item.profit|floatformat:2 }}</td>
-            <td>{{ item.margin|floatformat:2 }}%</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="7" style="text-align:center;color:#777;">No sales found for this date range</td></tr>
-        {% endfor %}
+            {% for row in sales_breakdown %}
+            <tr>
+                <td>{{ row.product_name }}</td>
+                <td>{{ row.quantity }}</td>
+                <td>Rs.{{ row.revenue|floatformat:2 }}</td>
+                <td>Rs.{{ row.cost|floatformat:2 }}</td>
+                <td>Rs.{{ row.gross_profit|floatformat:2 }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" style="text-align:center;color:#777;">No sales data available</td></tr>
+            {% endfor %}
         </tbody>
     </table>
 
@@ -99,6 +95,3 @@
 </div>
 </body>
 </html>
-
-
-

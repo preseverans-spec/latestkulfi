@@ -185,6 +185,23 @@ class OperationsExpense(models.Model):
         super().save(*args, **kwargs)
 
 
+class OperationsIncome(models.Model):
+    """Operational income entries used when additional money comes into business."""
+    income_date = models.DateField(default=timezone.now)
+    details = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-income_date', '-created_at']
+        verbose_name_plural = "Operations Incomes"
+
+    def __str__(self):
+        return f"{self.income_date} - {self.details} ({self.amount})"
+
+
 class SyncEvent(models.Model):
     """Server-side sync audit log and idempotency ledger for mobile clients."""
 
