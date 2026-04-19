@@ -42,6 +42,16 @@ ALLOWED_HOSTS = _as_list(
 
 CSRF_TRUSTED_ORIGINS = _as_list(os.getenv('CSRF_TRUSTED_ORIGINS'), default='')
 
+# Railway exposes the live domain in RAILWAY_PUBLIC_DOMAIN.
+# Add it automatically so production does not fail when ALLOWED_HOSTS is missing.
+railway_public_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
+if railway_public_domain and railway_public_domain not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(railway_public_domain)
+
+railway_origin = f"https://{railway_public_domain}" if railway_public_domain else ''
+if railway_origin and railway_origin not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(railway_origin)
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
