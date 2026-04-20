@@ -12,9 +12,8 @@ urlpatterns = [
     path('api/v1/', include('api.urls')),
 ]
 
-# Templates currently reference logo assets from MEDIA_URL.
-# Keep media routes enabled in production so logos and uploaded files are reachable.
+# Serve media files (user uploads)
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+# Serve static files (logos, CSS, JS) - needed for both DEBUG and production (Railway with WhiteNoise)
+urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
