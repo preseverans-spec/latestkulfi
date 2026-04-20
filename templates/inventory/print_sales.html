@@ -193,7 +193,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="report-logo">
+            <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
             <h1>SALES REPORT</h1>
             <p>Date: <strong>{{ selected_date|date:'l, F j, Y' }}</strong></p>
             {% if selected_salesperson %}

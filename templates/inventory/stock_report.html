@@ -6,7 +6,7 @@
 <h1 class="page-title"><i class="fas fa-boxes"></i> Stock Report</h1>
 
 <div class="print-header">
-    <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="print-logo">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
     <h4>Stock Report</h4>
     <p>Range: {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</p>
 </div>

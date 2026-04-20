@@ -6,7 +6,7 @@
 <h1 class="page-title"><i class="fas fa-calendar-day"></i> View Sales by Date</h1>
 
 <div class="print-header">
-    <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="print-logo">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
     <h4>Sales Report</h4>
     <p>Date: {% if selected_date %}{{ selected_date|date:'Y-m-d' }}{% else %}{% now "Y-m-d" %}{% endif %}</p>
 </div>

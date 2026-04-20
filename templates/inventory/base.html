@@ -330,7 +330,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="{% if user.is_staff %}{% url 'dashboard' %}{% else %}{% url 'quick_sales_entry' %}{% endif %}">
-                <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" style="width:64px;height:64px;object-fit:contain;">
+                <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" style="width:64px;height:64px;object-fit:contain;">
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>

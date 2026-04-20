@@ -147,7 +147,7 @@
         </div>
 
         <div class="header">
-            <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="report-logo">
+            <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
             <h1>EXPENSES REPORT</h1>
             <p>Date Range: <strong>{{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</strong></p>
             <p>Generated on {{ now|date:'Y-m-d H:i' }}</p>

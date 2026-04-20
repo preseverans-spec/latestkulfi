@@ -46,7 +46,7 @@
     <div class="no-print"><button onclick="window.print()">Print this page</button></div>
 
     <div class="header">
-        <img src="{{ MEDIA_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ MEDIA_URL }}logo/logo.png';" class="report-logo">
+        <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
         <h1>STOCK REPORT</h1>
         <p>Period: {{ start_date|date:'d M Y' }} to {{ end_date|date:'d M Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
         <p>Mode: {% if report_mode == 'general' %}General{% else %}Detailed{% endif %}</p>
