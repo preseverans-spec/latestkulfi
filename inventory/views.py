@@ -1322,6 +1322,50 @@ def normalize_sales_product_name(name):
     return cleaned_name.strip()
 
 
+# Fixed product order required for View Sales by Date, Daily Report, and Weekly Report.
+REPORT_PRODUCT_DISPLAY_ORDER = [
+    'malai',
+    'pista badam',
+    'chocolate',
+    'kesar badam',
+    'kesar pista',
+    'strawberry',
+    'dry fruit',
+    'blackcurrant',
+    'litchi',
+    'caramel coffee',
+    'rose',
+    'mango malai',
+    'butter scotch',
+    'coconut',
+    'elaichi',
+    'guava',
+    'paan',
+    'kajoor',
+]
+REPORT_PRODUCT_DISPLAY_INDEX = {
+    name: index for index, name in enumerate(REPORT_PRODUCT_DISPLAY_ORDER)
+}
+REPORT_PRODUCT_DISPLAY_ALIASES = {
+    'black current': 'blackcurrant',
+    'black currant': 'blackcurrant',
+    'blackcurrent': 'blackcurrant',
+    'butterscotch': 'butter scotch',
+    'kesar kajoor': 'kajoor',
+}
+
+
+def get_report_product_sort_key(product_name, sort_sku=''):
+    """Return stable sort key using fixed report product order, then name/SKU fallback."""
+    normalized_name = (product_name or '').strip().lower()
+    canonical_name = REPORT_PRODUCT_DISPLAY_ALIASES.get(normalized_name, normalized_name)
+    return (
+        REPORT_PRODUCT_DISPLAY_INDEX.get(canonical_name, len(REPORT_PRODUCT_DISPLAY_INDEX)),
+        canonical_name,
+        sort_sku or '',
+    )
+
+
 # Fixed display order required for Daily Sales Sheet product rows.
 DAILY_SALES_PRODUCT_DISPLAY_ORDER = [
     'malai',
@@ -1403,9 +1447,16 @@ def build_sales_groups(sales_qs, include_date=False):
         grouped_rows.append(row)
 
     if include_date:
-        grouped_rows.sort(key=lambda item: (item['sale_date'], item['sort_sku'], item['product_name']))
+        grouped_rows.sort(
+            key=lambda item: (
+                item['sale_date'],
+                *get_report_product_sort_key(item['product_name'], item.get('sort_sku', '')),
+            )
+        )
     else:
-        grouped_rows.sort(key=lambda item: (item['sort_sku'], item['product_name']))
+        grouped_rows.sort(
+            key=lambda item: get_report_product_sort_key(item['product_name'], item.get('sort_sku', ''))
+        )
     return grouped_rows
 
 
@@ -2778,7 +2829,9 @@ def _build_daily_report_context(selected_date):
         item['recorded_by'] = ', '.join(sorted(item['recorded_by'])) if item['recorded_by'] else '-'
         sales.append(item)
 
-    sales.sort(key=lambda item: item['product_name'])
+    sales.sort(
+        key=lambda item: get_report_product_sort_key(item['product_name'])
+    )
 
     total_revenue = sales_qs.aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
@@ -2860,7 +2913,9 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         item['margin'] = (item['profit'] / item['revenue']) * 100 if item['revenue'] else Decimal('0.0')
         weekly_product_breakdown.append(item)
 
-    weekly_product_breakdown.sort(key=lambda item: (item.get('sort_sku', ''), item['product_name']))
+    weekly_product_breakdown.sort(
+        key=lambda item: get_report_product_sort_key(item['product_name'], item.get('sort_sku', ''))
+    )
 
     return {
         'start_date': start_date,
