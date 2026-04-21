@@ -1311,6 +1311,13 @@ def inventory_date_history(request):
 
     return render(request, 'inventory/inventory_date_history.html', context)
 
+
+@login_required
+def stock_order(request):
+    """Stock order form for Indian Kulfi and Kulfi Corner manufacturers."""
+    today = date.today().strftime('%Y-%m-%d')
+    return render(request, 'inventory/stock_order.html', {'today': today})
+
 # ==================== SALES MODULE ====================
 
 def normalize_sales_product_name(name):

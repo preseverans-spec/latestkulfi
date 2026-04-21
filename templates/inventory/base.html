@@ -396,6 +396,9 @@
                         <a href="{% url 'inventory_date_history' %}" class="sub-item {% if request.resolver_match.url_name == 'inventory_date_history' %}active{% endif %}">
                             <i class="fas fa-history"></i> Stock History
                         </a>
+                        <a href="{% url 'stock_order' %}" class="sub-item {% if request.resolver_match.url_name == 'stock_order' %}active{% endif %}">
+                            <i class="fas fa-clipboard-list"></i> New Stock Order
+                        </a>
                     </div>
 
                     <!-- Kulfi Sales Section -->

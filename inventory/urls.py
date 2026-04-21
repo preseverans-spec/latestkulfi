@@ -28,6 +28,7 @@ urlpatterns = [
     path('inventory/clear-stock/<int:product_id>/', views.admin_only_view(views.clear_stock), name='clear_stock'),
     path('inventory/history/<int:product_id>/', views.admin_only_view(views.inventory_history), name='inventory_history'),
     path('inventory/date-history/', views.admin_only_view(views.inventory_date_history), name='inventory_date_history'),
+    path('inventory/stock-order/', views.admin_only_view(views.stock_order), name='stock_order'),
     
     # Sales
     path('sales/stock-taken/', views.sales_stock_taken_entry, name='sales_stock_taken_entry'),
