@@ -4,14 +4,9 @@ Django settings for kulfi project.
 
 from pathlib import Path
 import os
-from urllib.parse import urlparse
+import dj_database_url
 from django.core.management.utils import get_random_secret_key
 from datetime import timedelta
-
-try:
-    import dj_database_url
-except Exception:
-    dj_database_url = None
 
 
 def _as_bool(value, default=False):
@@ -106,32 +101,10 @@ WSGI_APPLICATION = 'kulfi_config.wsgi.application'
 
 # Database
 DATABASE_URL = os.getenv('DATABASE_URL')
-if DATABASE_URL and dj_database_url:
+if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.config(default=DATABASE_URL, conn_max_age=600, ssl_require=True)
     }
-elif DATABASE_URL:
-    parsed_db_url = urlparse(DATABASE_URL)
-    if parsed_db_url.scheme in ('postgres', 'postgresql'):
-        DATABASES = {
-            'default': {
-                'ENGINE': 'django.db.backends.postgresql',
-                'NAME': (parsed_db_url.path or '/').lstrip('/'),
-                'USER': parsed_db_url.username or '',
-                'PASSWORD': parsed_db_url.password or '',
-                'HOST': parsed_db_url.hostname or '',
-                'PORT': str(parsed_db_url.port or 5432),
-                'CONN_MAX_AGE': 600,
-                'OPTIONS': {'sslmode': 'require'},
-            }
-        }
-    else:
-        DATABASES = {
-            'default': {
-                'ENGINE': 'django.db.backends.sqlite3',
-                'NAME': BASE_DIR / 'db.sqlite3',
-            }
-        }
 else:
     DATABASES = {
         'default': {
