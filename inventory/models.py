@@ -158,6 +158,24 @@ class SalesStockTaken(models.Model):
         super().save(*args, **kwargs)
 
 
+# --- NEW MODEL: SalesCountDraft ---
+class SalesCountDraft(models.Model):
+    """Draft sales count per user/date/product, persists until sales are recorded."""
+    salesperson = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales_count_drafts')
+    sales_date = models.DateField(default=timezone.now)
+    product_key = models.CharField(max_length=120)
+    sales_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('salesperson', 'sales_date', 'product_key')
+        ordering = ['-sales_date', 'product_key']
+
+    def __str__(self):
+        return f"{self.salesperson.username} - {self.product_key} ({self.sales_date}): {self.sales_count}"
+
+
 class OperationsExpense(models.Model):
     """Operational expense entries used for net profit calculations."""
     operation_date = models.DateField(default=timezone.now)

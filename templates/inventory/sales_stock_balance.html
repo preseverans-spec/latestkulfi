@@ -1,0 +1,76 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Sales Stock Balance{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-balance-scale"></i> Sales Stock Balance</h1>
+<form method="get" class="mb-4">
+    <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+            <label for="date" class="form-label">Date</label>
+            <input type="date" id="date" name="date" class="form-control" value="{{ selected_date|date:'Y-m-d' }}">
+        </div>
+        <div class="col-md-3">
+            <label for="salesperson" class="form-label">Salesperson</label>
+            <select id="salesperson" name="salesperson" class="form-control">
+                <option value="">All</option>
+                {% for user in salespeople %}
+                <option value="{{ user.id }}" {% if user.id|stringformat:'s' == selected_salesperson_id %}selected{% endif %}>{{ user.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary">Filter</button>
+        </div>
+    </div>
+</form>
+
+<div class="mb-3 d-flex justify-content-end">
+    <form method="post" action="{% url 'delete_sales_stock_balance_for_date' %}" onsubmit="return confirm('Delete all Sales Stock Balance entries for this date?');">
+        {% csrf_token %}
+        <input type="hidden" name="sales_date" value="{{ selected_date|date:'Y-m-d' }}">
+        {% if selected_salesperson_id %}
+        <input type="hidden" name="salesperson" value="{{ selected_salesperson_id }}">
+        {% endif %}
+        <button type="submit" class="btn btn-danger btn-sm" title="Delete all entries for this date">
+            <i class="fas fa-trash"></i> Delete All
+        </button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">Stock Balance List</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Salesperson</th>
+                        <th>Product</th>
+                        <th>Balance Count</th>
+                        <th>Stock Taken</th>
+                        <th>Sales Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in balances %}
+                    <tr>
+                        <td>{{ entry.sales_date }}</td>
+                        <td>{{ entry.salesperson.username }}</td>
+                        <td>{{ entry.product_name }}</td>
+                        <td>{{ entry.balance_count }}</td>
+                        <td>{{ entry.stock_taken }}</td>
+                        <td>{{ entry.sales_count }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center">No records found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

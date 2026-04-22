@@ -22,7 +22,7 @@ import os
 import re
 from collections import defaultdict
 
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft
 from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
 
 
@@ -1668,12 +1668,14 @@ def quick_sales_entry(request):
         """Return grouped active products across all categories."""
         return group_active_products_by_name()
 
+
     if request.method == 'POST':
         action = request.POST.get('action', 'record_sales')
 
         if request.user.is_staff and action == 'save_stock_taken':
             messages.error(request, 'Stock taken entries are only available for sales users.')
             return redirect('quick_sales_entry')
+
 
         # Handle multiple sales entries by normalized product name.
         product_keys = request.POST.getlist('product_key[]')
@@ -1682,6 +1684,38 @@ def quick_sales_entry(request):
         stock_taken_counts = request.POST.getlist('stock_taken_count[]')
         sale_dates = request.POST.getlist('sale_date[]')
         notes_list = request.POST.getlist('notes[]')
+
+        # --- Save Sales Count Draft ---
+        if action == 'save_sales_count' and not request.user.is_staff:
+            selected_sales_date = None
+            if sale_dates and sale_dates[0]:
+                try:
+                    selected_sales_date = datetime.strptime(sale_dates[0], '%Y-%m-%d').date()
+                except Exception:
+                    selected_sales_date = timezone.now().date()
+            else:
+                selected_sales_date = timezone.now().date()
+
+            saved_count = 0
+            for i, product_key in enumerate(product_keys):
+                if not product_key:
+                    continue
+                try:
+                    quantity = int(quantities[i]) if i < len(quantities) else 0
+                except Exception:
+                    quantity = 0
+                # Save or update draft
+                obj, created = SalesCountDraft.objects.update_or_create(
+                    salesperson=request.user,
+                    sales_date=selected_sales_date,
+                    product_key=product_key,
+                    defaults={
+                        'sales_count': quantity,
+                    },
+                )
+                saved_count += 1
+            messages.success(request, f'Saved sales count draft for {saved_count} product(s).')
+            return redirect(f"{reverse('quick_sales_entry')}?sales_date={selected_sales_date}")
 
         # If a sales user records sales without entering any sales count,
         # assume all previously saved stock taken for the selected date is sold.
@@ -1817,6 +1851,7 @@ def quick_sales_entry(request):
 
             return redirect('quick_sales_entry')
 
+
         for i, product_key in enumerate(product_keys):
             if not product_key:
                 continue
@@ -1895,6 +1930,19 @@ def quick_sales_entry(request):
             except Exception as e:
                 errors.append(f"Error processing row {i+1}: {str(e)}")
 
+        # --- Clear sales count drafts for this user/date after recording sales ---
+        if not request.user.is_staff:
+            # Use the first sale_date in sale_dates or today
+            clear_date = None
+            if sale_dates and sale_dates[0]:
+                try:
+                    clear_date = datetime.strptime(sale_dates[0], '%Y-%m-%d').date()
+                except Exception:
+                    clear_date = timezone.now().date()
+            else:
+                clear_date = timezone.now().date()
+            SalesCountDraft.objects.filter(salesperson=request.user, sales_date=clear_date).delete()
+
         # Rebuild live stock from historical records after backdated inserts.
         if touched_product_ids:
             _recalculate_current_stock_for_products(touched_product_ids)
@@ -1924,6 +1972,7 @@ def quick_sales_entry(request):
 
         return redirect('quick_sales_entry')
 
+
     # GET request - show form with stock as-of selected sales date
     selected_sales_date_raw = request.GET.get('sales_date') or request.GET.get('date')
     if selected_sales_date_raw:
@@ -1936,6 +1985,12 @@ def quick_sales_entry(request):
 
     grouped_products_for_form = build_grouped_products_for_sales_date(selected_sales_date)
     prefill_from_stock_taken = request.GET.get('prefill_from_stock_taken') == '1'
+
+    # --- Prefill sales count from draft if exists ---
+    sales_count_drafts = {}
+    if not request.user.is_staff:
+        for draft in SalesCountDraft.objects.filter(salesperson=request.user, sales_date=selected_sales_date):
+            sales_count_drafts[draft.product_key] = draft.sales_count
 
     # Daily Sales Sheet should always reflect live stock, even for backdated sale dates.
     current_grouped_products = get_sales_groups()
@@ -1953,11 +2008,16 @@ def quick_sales_entry(request):
 
     for product in grouped_products_for_form:
         product['stock_taken_count'] = stock_taken_map.get(product['key'], 0)
-        product['prefill_quantity'] = (
-            stock_taken_map.get(product['key'], 0)
-            if (prefill_from_stock_taken and not request.user.is_staff)
-            else 0
-        )
+        # Prefill logic: draft > stock_taken (if prefill_from_stock_taken) > 0
+        if not request.user.is_staff:
+            if product['key'] in sales_count_drafts:
+                product['prefill_quantity'] = sales_count_drafts[product['key']]
+            elif prefill_from_stock_taken:
+                product['prefill_quantity'] = stock_taken_map.get(product['key'], 0)
+            else:
+                product['prefill_quantity'] = 0
+        else:
+            product['prefill_quantity'] = 0
 
     total_stock_taken_for_date = sum(stock_taken_map.values())
 

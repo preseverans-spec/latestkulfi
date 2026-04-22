@@ -1,0 +1,10 @@
+{% extends 'inventory/base.html' %}
+{% block content %}
+<h2>Add User</h2>
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Add User</button>
+</form>
+<a href="{% url 'user_list' %}">Back to User List</a>
+{% endblock %}
