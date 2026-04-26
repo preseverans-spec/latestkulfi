@@ -31,7 +31,7 @@
                                 SKU (Stock Keeping Unit) <span class="text-danger">*</span>
                             </label>
                             {{ form.sku }}
-                            <small class="form-text text-muted">Auto-generated from category (e.g., KC001, IK001). You can still edit it.</small>
+                            <small class="form-text text-muted">Auto-generated from category (e.g., IK001). You can still edit it.</small>
                             {% if form.sku.errors %}
                             <div class="alert alert-danger mt-2">{{ form.sku.errors }}</div>
                             {% endif %}
@@ -115,11 +115,14 @@
                     </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-between">
-                        <a href="{% url 'inventory_list' %}" class="btn btn-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
-                            <i class="fas fa-times"></i> Cancel
+                        <a href="{% url 'inventory_list' %}" class="btn btn-secondary btn-lg d-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                            <i class="fas fa-times fa-lg"></i> Cancel
                         </a>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-save"></i> Save Product
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-home fa-lg"></i> Home
+                        </a>
+                        <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-save fa-lg"></i> Save Product
                         </button>
                     </div>
                 </form>

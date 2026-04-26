@@ -6,5 +6,12 @@
     {{ form.as_p }}
     <button type="submit">Add User</button>
 </form>
-<a href="{% url 'user_list' %}">Back to User List</a>
+<div class="d-flex gap-2 mt-3">
+    <a href="{% url 'user_list' %}" class="btn btn-secondary d-flex align-items-center gap-2">
+        <i class="fas fa-arrow-left"></i> Back to User List
+    </a>
+    <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-flex align-items-center gap-2">
+        <i class="fas fa-home"></i> Home
+    </a>
+</div>
 {% endblock %}

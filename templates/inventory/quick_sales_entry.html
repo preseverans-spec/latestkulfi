@@ -68,8 +68,11 @@
         </div>
         <div class="card-body">
             {% if not user.is_staff %}
-            <div class="alert alert-secondary py-2">
+            <div class="alert alert-secondary py-2 mb-2">
                 <strong>Current Stock Taken for Date:</strong> <span id="summary-stock-taken">{{ total_stock_taken_for_date }}</span>
+            </div>
+            <div class="alert alert-success py-2 mb-2">
+                <strong>Total Combined Stock (Live):</strong> <span id="summary-total-combined">{{ total_combined_stock }}</span>
             </div>
             {% endif %}
             <div class="table-responsive">

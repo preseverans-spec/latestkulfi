@@ -85,12 +85,17 @@
 
             <div class="mt-3">
                 <div class="row g-2">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <div class="alert alert-info py-2 mb-0">
                             <strong>Total Stock Taken:</strong> <span id="summary-total-taken">{{ total_taken_count }}</span>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
+                        <div class="alert alert-success py-2 mb-0">
+                            <strong>Total Combined Stock (Live):</strong> <span id="summary-total-combined">{{ total_combined_stock }}</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
                         <div class="alert alert-warning py-2 mb-0">
                             <strong>Total Estimated Value:</strong> ₹<span id="summary-total-estimated">{{ total_estimated_value|floatformat:2 }}</span>
                         </div>

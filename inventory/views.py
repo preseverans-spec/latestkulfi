@@ -558,6 +558,9 @@ def inventory_list(request):
             product.display_stock = max(0, stock_map.get(product.id, 0))
         else:
             product.display_stock = max(0, product.current_stock)
+        # Remove 'KC' from product name for display
+        if 'KC' in product.name:
+            product.name = product.name.replace('KC', '').strip()
 
     movement_product_ids = set()
     if movement_filter:
@@ -1281,6 +1284,9 @@ def inventory_date_history(request):
     stock_map = get_stock_as_of_date_map(products, end_date)
 
     for product in products:
+        # Remove 'KC' from product name for display
+        if 'KC' in product.name:
+            product.name = product.name.replace('KC', '').strip()
         stock = stock_map.get(product.id, 0)
         stock_amount = Decimal(stock) * product.cost_price
         stock_snapshot.append({
@@ -1648,12 +1654,14 @@ def sales_stock_taken_entry(request):
         total_taken_count += stock_taken_count
         total_estimated_value += product['estimated_total']
 
+    total_combined_stock = sum(product['stock'] for product in grouped_products_for_form)
     context = {
         'products': grouped_products_for_form,
         'selected_sales_date': selected_sales_date,
         'today': timezone.now().date(),
         'total_taken_count': total_taken_count,
         'total_estimated_value': total_estimated_value,
+        'total_combined_stock': total_combined_stock,
         'target_user': target_user,
         'salespeople': salespeople,
         'selected_salesperson_id': selected_salesperson_id,
@@ -1994,9 +2002,11 @@ def quick_sales_entry(request):
 
     # Daily Sales Sheet should always reflect live stock, even for backdated sale dates.
     current_grouped_products = get_sales_groups()
+    # Use historical stock as of selected_sales_date for combined stock
     for product in grouped_products_for_form:
         candidates = current_grouped_products.get(product['key'], [])
-        product['stock'] = sum(max(0, item.current_stock) for item in candidates)
+        stock_map = get_stock_as_of_date_map(candidates, selected_sales_date)
+        product['stock'] = sum(stock_map.get(item.id, 0) for item in candidates)
 
     stock_taken_map = {
         item.product_key: item.stock_taken_count
@@ -2021,11 +2031,13 @@ def quick_sales_entry(request):
 
     total_stock_taken_for_date = sum(stock_taken_map.values())
 
+    total_combined_stock = sum(product['stock'] for product in grouped_products_for_form)
     context = {
         'products': grouped_products_for_form,
         'today': timezone.now().date(),
         'selected_sales_date': selected_sales_date,
         'total_stock_taken_for_date': total_stock_taken_for_date,
+        'total_combined_stock': total_combined_stock,
         'prefill_from_stock_taken': prefill_from_stock_taken,
     }
     return render(request, 'inventory/quick_sales_entry.html', context)
@@ -2868,6 +2880,11 @@ def reports_dashboard(request):
 
 
 def _build_daily_report_context(selected_date):
+
+    # Add total combined stock taken for the date
+    stock_taken_qs = SalesStockTaken.objects.filter(sales_date=selected_date)
+    total_combined_stock_taken = stock_taken_qs.aggregate(total=Coalesce(Sum('stock_taken_count'), 0))['total']
+
     sales_qs = Sales.objects.filter(sale_date=selected_date).select_related('product', 'recorded_by')
     grouped_sales = {}
     for sale in sales_qs:
@@ -2910,6 +2927,11 @@ def _build_daily_report_context(selected_date):
     )['total']
     net_profit = total_profit - total_operation_cost
 
+    # Calculate total stock as of selected date
+    products = Product.objects.filter(is_active=True)
+    stock_map = get_stock_as_of_date_map(products, selected_date)
+    total_stock = sum(stock_map.values())
+
     return {
         'selected_date': selected_date,
         'sales': sales,
@@ -2919,6 +2941,8 @@ def _build_daily_report_context(selected_date):
         'total_operation_cost': total_operation_cost,
         'net_profit': net_profit,
         'total_transactions': len(sales),
+        'total_stock': total_stock,
+        'total_combined_stock_taken': total_combined_stock_taken,
     }
 
 
@@ -3278,16 +3302,24 @@ def weekly_report(request):
     today = timezone.now().date()
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
-    
-    if not start_date:
-        start_date = (today - timedelta(days=today.weekday()))
+
+    # Default to current week (Sunday to Saturday)
+    if not start_date and not end_date:
+        # If today is Sunday (weekday() == 6), start_date is today
+        # Otherwise, go back to the most recent Sunday
+        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        end_date_obj = start_date_obj + timedelta(days=6)
+        start_date = start_date_obj
+        end_date = end_date_obj
     else:
-        start_date = datetime.fromisoformat(start_date).date()
-    
-    if not end_date:
-        end_date = start_date + timedelta(days=6)
-    else:
-        end_date = datetime.fromisoformat(end_date).date()
+        if not start_date:
+            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        else:
+            start_date = datetime.fromisoformat(start_date).date()
+        if not end_date:
+            end_date = start_date + timedelta(days=6)
+        else:
+            end_date = datetime.fromisoformat(end_date).date()
     
     salespeople, selected_salesperson, selected_salesperson_id = _get_weekly_salesperson_filter_data(request)
     context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
@@ -3305,44 +3337,55 @@ def profit_report(request):
     today = timezone.now().date()
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
-    
-    if not start_date:
-        start_date = today - timedelta(days=30)
+
+    # Default to current week (Sunday to Saturday)
+    if not start_date and not end_date:
+        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        end_date_obj = start_date_obj + timedelta(days=6)
+        start_date = start_date_obj
+        end_date = end_date_obj
     else:
-        start_date = datetime.fromisoformat(start_date).date()
-    
-    if not end_date:
-        end_date = today
-    else:
-        end_date = datetime.fromisoformat(end_date).date()
-    
+        if not start_date:
+            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        else:
+            start_date = datetime.fromisoformat(start_date).date()
+        if not end_date:
+            end_date = start_date + timedelta(days=6)
+        else:
+            end_date = datetime.fromisoformat(end_date).date()
+
     context = _build_profit_report_context(start_date, end_date)
-    
     return render(request, 'inventory/profit_report.html', context)
 
 
 @login_required
 def income_statement(request):
     """Income Statement (Profit and Loss Statement) for a selected date range."""
-    default_start_date, default_end_date = _get_current_week_date_range()
+    today = timezone.now().date()
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
 
-    if not start_date:
-        start_date = default_start_date
+    # Default to current week (Sunday to Saturday)
+    if not start_date and not end_date:
+        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        end_date_obj = start_date_obj + timedelta(days=6)
+        start_date = start_date_obj
+        end_date = end_date_obj
     else:
-        try:
-            start_date = datetime.fromisoformat(start_date).date()
-        except ValueError:
-            start_date = default_start_date
-
-    if not end_date:
-        end_date = default_end_date
-    else:
-        try:
-            end_date = datetime.fromisoformat(end_date).date()
-        except ValueError:
-            end_date = default_end_date
+        if not start_date:
+            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        else:
+            try:
+                start_date = datetime.fromisoformat(start_date).date()
+            except ValueError:
+                start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        if not end_date:
+            end_date = start_date + timedelta(days=6)
+        else:
+            try:
+                end_date = datetime.fromisoformat(end_date).date()
+            except ValueError:
+                end_date = start_date + timedelta(days=6)
 
     if start_date > end_date:
         start_date, end_date = end_date, start_date
@@ -3380,34 +3423,52 @@ def stock_report(request):
     if report_mode not in ('general', 'detailed'):
         report_mode = 'detailed'
 
-    if not start_date_raw:
-        start_date = today - timedelta(days=30)
+
+    # If no date is selected, show empty page (like daily_report)
+    if not start_date_raw and not end_date_raw:
+        context = {
+            'start_date': None,
+            'end_date': None,
+            'movement_rows': [],
+            'general_rows': [],
+            'total_entries': 0,
+            'total_quantity': 0,
+            'indian_kulfi_quantity': 0,
+            'kulfi_corner_quantity': 0,
+            'total_purchase_cost': Decimal('0.0'),
+            'include_positive_adjustments': False,
+            'report_mode': report_mode,
+            'is_cleared': False,
+        }
+        return render(request, 'inventory/stock_report.html', context)
     else:
-        try:
-            start_date = datetime.fromisoformat(start_date_raw).date()
-        except ValueError:
-            start_date = today - timedelta(days=30)
+        if not start_date_raw:
+            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        else:
+            try:
+                start_date = datetime.fromisoformat(start_date_raw).date()
+            except ValueError:
+                start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
+        if not end_date_raw:
+            end_date = start_date + timedelta(days=6)
+        else:
+            try:
+                end_date = datetime.fromisoformat(end_date_raw).date()
+            except ValueError:
+                end_date = start_date + timedelta(days=6)
 
-    if not end_date_raw:
-        end_date = today
-    else:
-        try:
-            end_date = datetime.fromisoformat(end_date_raw).date()
-        except ValueError:
-            end_date = today
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+            messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
 
-    if start_date > end_date:
-        start_date, end_date = end_date, start_date
-        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
-
-    context = _build_stock_report_context(
-        start_date,
-        end_date,
-        include_positive_adjustments=include_positive_adjustments,
-        report_mode=report_mode,
-    )
-    context['is_cleared'] = False
-    return render(request, 'inventory/stock_report.html', context)
+        context = _build_stock_report_context(
+            start_date,
+            end_date,
+            include_positive_adjustments=include_positive_adjustments,
+            report_mode=report_mode,
+        )
+        context['is_cleared'] = False
+        return render(request, 'inventory/stock_report.html', context)
 
 
 @login_required

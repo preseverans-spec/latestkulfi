@@ -46,12 +46,15 @@
                         <input type="text" class="form-control" id="total-price" value="₹{{ sale.total_price|floatformat:2 }}" disabled>
                     </div>
 
-                    <div class="mt-4">
-                        <button type="submit" class="btn btn-primary btn-lg">
-                            <i class="fas fa-save"></i> Update Sale
+                    <div class="mt-4 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-save fa-lg"></i> Update Sale
                         </button>
-                        <a href="{% url 'view_sales' %}" class="btn btn-secondary btn-lg ms-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
-                            <i class="fas fa-times"></i> Cancel
+                        <a href="{% url 'view_sales' %}" class="btn btn-secondary btn-lg d-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                            <i class="fas fa-times fa-lg"></i> Cancel
+                        </a>
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-home fa-lg"></i> Home
                         </a>
                     </div>
                 </form>

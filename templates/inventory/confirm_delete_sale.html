@@ -61,8 +61,11 @@
                         <button type="submit" class="btn btn-danger">
                             <i class="fas fa-trash"></i> Yes, Delete Sale
                         </button>
-                        <a href="{% url 'view_sales' %}" class="btn btn-secondary" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                        <a href="{% url 'view_sales' %}" class="btn btn-secondary d-inline-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
                             <i class="fas fa-times"></i> Cancel
+                        </a>
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-inline-flex align-items-center gap-2">
+                            <i class="fas fa-home"></i> Home
                         </a>
                     </div>
                 </form>
