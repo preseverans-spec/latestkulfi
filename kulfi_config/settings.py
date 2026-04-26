@@ -67,7 +67,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'inventory',
     'api',
-    'sslserver',
+    
 ]
 
 MIDDLEWARE = [
