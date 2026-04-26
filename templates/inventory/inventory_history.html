@@ -9,9 +9,14 @@
     <div class="card-body">
         <p><strong>Current Stock:</strong> {{ product.current_stock }} units</p>
         <p><strong>Reorder Level:</strong> {{ product.reorder_level }} units</p>
-        <a href="{% url 'inventory_list' %}" class="btn btn-secondary">
-            <i class="fas fa-arrow-left"></i> Back to Inventory
-        </a>
+        <div class="d-flex gap-2 mb-3">
+            <a href="{% url 'inventory_list' %}" class="btn btn-secondary d-flex align-items-center gap-2">
+                <i class="fas fa-arrow-left"></i> Back to Inventory
+            </a>
+            <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-flex align-items-center gap-2">
+                <i class="fas fa-home"></i> Home
+            </a>
+        </div>
     </div>
 </div>
 

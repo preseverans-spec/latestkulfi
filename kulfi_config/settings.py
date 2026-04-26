@@ -29,8 +29,11 @@ except Exception:
     # dotenv is optional; environment variables can still be provided by the host.
     pass
 
+
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY') or get_random_secret_key()
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = _as_bool(os.getenv('DEBUG'), default=True)
@@ -64,6 +67,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'inventory',
     'api',
+    'sslserver',
 ]
 
 MIDDLEWARE = [

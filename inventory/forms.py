@@ -6,7 +6,32 @@ from django.utils import timezone
 from .models import Product, Sales, OperationsExpense, OperationsIncome
 
 
+
 class ProductForm(forms.ModelForm):
+    def clean_cost_price(self):
+        cost_price = self.cleaned_data.get('cost_price')
+        if cost_price is not None and cost_price < 0:
+            raise forms.ValidationError('Cost price cannot be negative.')
+        return cost_price
+
+    def clean_selling_price(self):
+        selling_price = self.cleaned_data.get('selling_price')
+        if selling_price is not None and selling_price < 0:
+            raise forms.ValidationError('Selling price cannot be negative.')
+        return selling_price
+
+    def clean_current_stock(self):
+        current_stock = self.cleaned_data.get('current_stock')
+        if current_stock is not None and current_stock < 0:
+            raise forms.ValidationError('Current stock cannot be negative.')
+        return current_stock
+
+    def clean_reorder_level(self):
+        reorder_level = self.cleaned_data.get('reorder_level')
+        if reorder_level is not None and reorder_level < 0:
+            raise forms.ValidationError('Reorder level cannot be negative.')
+        return reorder_level
+
     DEFAULT_CATEGORIES = ['Kulfi Corner', 'Indian Kulfi']
     CATEGORY_PREFIX_MAP = {
         'Kulfi Corner': 'KC',

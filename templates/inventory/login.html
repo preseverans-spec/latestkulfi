@@ -180,9 +180,33 @@
             </form>
 
             <div class="login-footer">
-                <p>Demo Credentials:</p>
-                <small>Username: admin | Password: admin123</small>
+                <a href="#" id="forgot-password-link">Forgot Password?</a>
             </div>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    var forgotLink = document.getElementById('forgot-password-link');
+                    if (forgotLink) {
+                        forgotLink.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            fetch('{% url "send_forgot_password_email" %}', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': '{{ csrf_token }}'
+                                },
+                                body: JSON.stringify({})
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                alert(data.message || 'Password reset request sent. The admin will contact you.');
+                            })
+                            .catch(() => {
+                                alert('Failed to send password reset request.');
+                            });
+                        });
+                    }
+                });
+            </script>
         </div>
     </div>
 

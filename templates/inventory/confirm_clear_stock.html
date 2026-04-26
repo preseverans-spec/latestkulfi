@@ -9,7 +9,10 @@
     </div>
     <div class="card-body">
         <p>Are you sure you want to clear all stock for <strong>{{ product.name }}</strong> (currently {{ product.current_stock }} units)?</p>
-        <p class="text-danger">This action sets stock to 0 and creates an adjustment record.</p>
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Warning:</strong> This action is <u>irreversible</u>. It will set stock to 0 and create an adjustment record. This cannot be undone.
+        </div>
 
         <form method="POST">
             {% csrf_token %}

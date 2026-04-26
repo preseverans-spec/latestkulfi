@@ -1,3 +1,26 @@
+from django.views.decorators.http import require_POST
+from django.core.mail import send_mail
+import json
+# ==================== AUTHENTICATION ====================
+
+# Forgot Password Email Handler
+@require_POST
+def send_forgot_password_email(request):
+    try:
+        data = json.loads(request.body.decode()) if request.body else {}
+    except Exception:
+        data = {}
+    user_email = 'jsdansari@gmail.com'
+    user_ip = request.META.get('REMOTE_ADDR', 'Unknown IP')
+    ua = request.META.get('HTTP_USER_AGENT', 'Unknown')
+    send_mail(
+        subject='Indian Kulfi Inventory: Forgot Password Request',
+        message=f"A user has requested a password reset from the login page.\n\nIP: {user_ip}\nUser-Agent: {ua}",
+        from_email=None,
+        recipient_list=[user_email],
+        fail_silently=False,
+    )
+    return JsonResponse({'message': 'Password reset request sent. The admin will contact you.'})
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
@@ -2618,25 +2641,35 @@ def expenses_history(request):
 
 def _build_expenses_history_context(request):
     """Build expenses history context using optional date-range filters."""
+
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
+
+    # Calculate current week (Sunday to Saturday)
+    weekday = today.weekday()  # Monday=0, Sunday=6
+    # Find last Sunday
+    days_since_sunday = (today.weekday() + 1) % 7
+    this_sunday = today - timedelta(days=days_since_sunday)
+    # Find next Saturday
+    days_until_saturday = (5 - today.weekday()) % 7 + 1
+    this_saturday = this_sunday + timedelta(days=6)
 
     if start_date_raw:
         try:
             start_date = datetime.fromisoformat(start_date_raw).date()
         except ValueError:
-            start_date = today - timedelta(days=30)
+            start_date = this_sunday
     else:
-        start_date = today - timedelta(days=30)
+        start_date = this_sunday
 
     if end_date_raw:
         try:
             end_date = datetime.fromisoformat(end_date_raw).date()
         except ValueError:
-            end_date = today
+            end_date = this_saturday
     else:
-        end_date = today
+        end_date = this_saturday
 
     if start_date > end_date:
         start_date, end_date = end_date, start_date

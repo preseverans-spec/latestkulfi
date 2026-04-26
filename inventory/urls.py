@@ -86,4 +86,6 @@ urlpatterns = [
     path('users/add/', views.admin_only_view(views.add_user), name='add_user'),
     path('users/<int:user_id>/edit/', views.admin_only_view(views.edit_user), name='edit_user'),
     path('users/<int:user_id>/delete/', views.admin_only_view(views.delete_user), name='delete_user'),
+    # Forgot Password AJAX endpoint
+    path('forgot-password/', views.send_forgot_password_email, name='send_forgot_password_email'),
 ]

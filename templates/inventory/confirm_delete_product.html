@@ -9,7 +9,10 @@
     </div>
     <div class="card-body">
         <p>Are you sure you want to delete <strong>{{ product.name }}</strong>?</p>
-        <p class="text-muted">This action will hide the product from inventory and cannot be reversed via UI.</p>
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Warning:</strong> This action is <u>irreversible</u> and will permanently hide the product from inventory. It cannot be undone.
+        </div>
 
         <form method="POST">
             {% csrf_token %}
