@@ -148,9 +148,98 @@
             <i class="fas fa-print"></i> Print / Export
         </button>
         <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="#" onclick="openPrintWindow(); return false;">
-                <i class="fas fa-file-alt"></i> Print / Save as PDF
+            <li><a class="dropdown-item" href="#" onclick="exportPDF(); return false;">
+                <i class="fas fa-file-pdf"></i> Download PDF
             </a></li>
+            <!-- jsPDF for PDF export -->
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+            <script>
+            function exportPDF() {
+                const d = getOrderData();
+                // Build an off-screen div with the clean table
+                const container = document.createElement('div');
+                container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
+
+                let rows = '';
+                d.rows.forEach(function(r) {
+                    rows += '<tr>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
+                        '</tr>';
+                });
+
+                container.innerHTML =
+                    '<div style="text-align:center;margin-bottom:10px;">'
+                    + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
+                    + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + '</div>'
+                    + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
+                    + '<thead><tr>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">S.No.</th>'
+                    + '<th style="border:1px solid #333;padding:5px 12px;background:#e0e0e0;font-weight:700;">Kulfi Name</th>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.lotLabel + '</th>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">Quantity</th>'
+                    + '</tr></thead>'
+                    + '<tbody>' + rows + '</tbody>'
+                    + '<tfoot><tr>'
+                    + '<td colspan="2" style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">Total</td>'
+                    + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalLot + '</td>'
+                    + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalQty + '</td>'
+                    + '</tr></tfoot>'
+                    + '</table>';
+
+                document.body.appendChild(container);
+                html2canvas(container, { backgroundColor: '#ffffff', scale: 2 }).then(function(canvas) {
+                    document.body.removeChild(container);
+                    const imgData = canvas.toDataURL('image/png');
+                    const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+                    const pageWidth = pdf.internal.pageSize.getWidth();
+                    const pageHeight = pdf.internal.pageSize.getHeight();
+                    // Calculate image dimensions to fit A4
+                    const imgWidth = pageWidth - 40;
+                    const imgHeight = canvas.height * imgWidth / canvas.width;
+                    let y = 20;
+                    pdf.addImage(imgData, 'PNG', 20, y, imgWidth, imgHeight);
+                    pdf.save('StockOrder_' + d.date + '.pdf');
+                });
+            }
+            </script>
+            <script>
+            function saveAndPrintOrder() {
+                const d = getOrderData();
+                fetch("{% url 'save_stock_order' %}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({
+                        manufacturer: d.mfgLabel,
+                        order_date: d.date,
+                        items: d.rows
+                    })
+                }).then(resp => resp.json()).then(data => {
+                    openPrintWindow();
+                });
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+            </script>
             <li><a class="dropdown-item" href="#" onclick="exportExcel(); return false;">
                 <i class="fas fa-file-excel"></i> Download Excel
             </a></li>
@@ -166,6 +255,7 @@
         <i class="fas fa-undo"></i> Reset
     </button>
 </div>
+
 
 <!-- Order Table -->
 <div class="order-wrapper">
@@ -228,6 +318,17 @@
             </tr>
         </tfoot>
     </table>
+</div>
+
+<!-- Stock Order History Section -->
+<div class="card mt-4">
+    <div class="card-header bg-secondary text-white">
+        <h5 class="mb-0"><i class="fas fa-history"></i> Stock Order History</h5>
+    </div>
+    <div class="card-body">
+        <!-- Placeholder for previous order details. Replace with dynamic content as needed. -->
+        <p class="text-muted">Previous stock order details will appear here.</p>
+    </div>
 </div>
 
 <script>
@@ -428,12 +529,15 @@
         const d = getOrderData();
         let rows = '';
         d.rows.forEach(function(r) {
-            rows += '<tr>' +
-                '<td>' + r.sno + '</td>' +
-                '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
-                '<td>' + (r.lot !== '' ? r.lot : '') + '</td>' +
-                '<td>' + (r.qty !== '' ? r.qty : '') + '</td>' +
-                '</tr>';
+            // Only include products with non-empty and non-zero quantity
+            if (r.qty !== '' && r.qty !== 0 && r.lot !== '' && r.lot !== 0) {
+                rows += '<tr>' +
+                    '<td>' + r.sno + '</td>' +
+                    '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
+                    '<td>' + r.lot + '</td>' +
+                    '<td>' + r.qty + '</td>' +
+                    '</tr>';
+            }
         });
         const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Stock Order</title>'

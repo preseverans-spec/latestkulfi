@@ -1,7 +1,10 @@
+
 from django.urls import path
 from . import views
+from .views import save_stock_order
 
 urlpatterns = [
+        path('save_stock_order/', save_stock_order, name='save_stock_order'),
     # Authentication
     path('', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),

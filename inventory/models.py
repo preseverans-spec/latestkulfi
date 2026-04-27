@@ -1,3 +1,18 @@
+
+from django.db import models
+from django.contrib.auth import get_user_model
+
+class StockOrder(models.Model):
+    manufacturer = models.CharField(max_length=100)
+    order_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True)
+
+class StockOrderItem(models.Model):
+    order = models.ForeignKey(StockOrder, related_name='items', on_delete=models.CASCADE)
+    kulfi_name = models.CharField(max_length=100)
+    lot = models.IntegerField(default=0)
+    quantity = models.IntegerField(default=0)
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone

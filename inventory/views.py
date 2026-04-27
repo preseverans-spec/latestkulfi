@@ -1,3 +1,29 @@
+from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
+from .models import StockOrder, StockOrderItem
+# Save Stock Order via AJAX
+@csrf_exempt
+@login_required
+def save_stock_order(request):
+    if request.method == 'POST':
+        data = json.loads(request.body.decode())
+        manufacturer = data.get('manufacturer')
+        order_date = data.get('order_date')
+        items = data.get('items', [])
+        order = StockOrder.objects.create(
+            manufacturer=manufacturer,
+            order_date=order_date,
+            created_by=request.user if request.user.is_authenticated else None
+        )
+        for item in items:
+            StockOrderItem.objects.create(
+                order=order,
+                kulfi_name=item.get('name'),
+                lot=item.get('lot', 0),
+                quantity=item.get('qty', 0)
+            )
+        return JsonResponse({'status': 'success'})
+    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
 from django.views.decorators.http import require_POST
 from django.core.mail import send_mail
 import json
@@ -555,7 +581,7 @@ def inventory_list(request):
     if category_filter:
         products = products.filter(category__in=category_filter)
 
-    categories = Product.objects.filter(is_active=True).values_list('category', flat=True).distinct().order_by('category')
+    categories = ['Indian Kulfi']
 
     sort_options = {
         'name': 'name',
@@ -810,7 +836,8 @@ def print_inventory_pdf(request):
         from reportlab.lib.units import inch
 
         response = HttpResponse(content_type='application/pdf')
-        response['Content-Disposition'] = 'attachment; filename="inventory_view.pdf"'
+        today_str = timezone.localtime().strftime('%Y-%m-%d')
+        response['Content-Disposition'] = f'attachment; filename="inventory_view_{today_str}.pdf"'
 
         doc = SimpleDocTemplate(response, pagesize=landscape(A4))
         elements = []
@@ -838,10 +865,11 @@ def print_inventory_pdf(request):
         for product in context['products']:
             stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
             status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+            display_name = product.name.replace('KC', '').strip() if 'KC' in product.name else product.name
             data.append([
-                product.name,
+                display_name,
                 product.sku,
-                product.category,
+                'Indian Kulfi',
                 str(stock_value),
                 str(product.reorder_level),
                 f"Rs.{product.cost_price:.2f}",
@@ -919,10 +947,11 @@ def print_inventory_excel(request):
         for product in context['products']:
             stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
             status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+            display_name = product.name.replace('KC', '').strip() if 'KC' in product.name else product.name
 
-            ws.cell(row=row_number, column=1).value = product.name
+            ws.cell(row=row_number, column=1).value = display_name
             ws.cell(row=row_number, column=2).value = product.sku
-            ws.cell(row=row_number, column=3).value = product.category
+            ws.cell(row=row_number, column=3).value = 'Indian Kulfi'
             ws.cell(row=row_number, column=4).value = int(stock_value)
             ws.cell(row=row_number, column=5).value = int(product.reorder_level)
             ws.cell(row=row_number, column=6).value = float(product.cost_price)
@@ -937,7 +966,8 @@ def print_inventory_excel(request):
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        response['Content-Disposition'] = 'attachment; filename="inventory_view.xlsx"'
+        today_str = timezone.localtime().strftime('%Y-%m-%d')
+        response['Content-Disposition'] = f'attachment; filename="inventory_view_{today_str}.xlsx"'
         wb.save(response)
         return response
     except ImportError as e:
@@ -954,7 +984,8 @@ def print_inventory_csv(request):
     context = _build_inventory_export_context(request)
 
     response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = 'attachment; filename="inventory_view.csv"'
+    today_str = timezone.localtime().strftime('%Y-%m-%d')
+    response['Content-Disposition'] = f'attachment; filename="inventory_view_{today_str}.csv"'
 
     writer = csv.writer(response)
     writer.writerow(['View Inventory Report'])
@@ -968,10 +999,11 @@ def print_inventory_csv(request):
     for product in context['products']:
         stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
         status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+        display_name = product.name.replace('KC', '').strip() if 'KC' in product.name else product.name
         writer.writerow([
-            product.name,
+            display_name,
             product.sku,
-            product.category,
+            'Indian Kulfi',
             stock_value,
             product.reorder_level,
             f"{product.cost_price:.2f}",

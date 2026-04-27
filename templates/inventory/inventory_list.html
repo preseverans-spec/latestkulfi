@@ -144,12 +144,10 @@
             </div>
 
             <div class="col-lg-2 col-md-6">
-                <select name="category" class="form-select" multiple size="3">
-                    {% for cat in categories %}
-                    <option value="{{ cat }}" {% if cat in category_filter %}selected{% endif %}>{{ cat }}</option>
-                    {% endfor %}
+                <select name="category" class="form-select" multiple size="1">
+                    <option value="Indian Kulfi" {% if 'Indian Kulfi' in category_filter %}selected{% endif %}>Indian Kulfi</option>
                 </select>
-                <small class="text-muted">(Ctrl/Cmd + click to multi-select)</small>
+                <small class="text-muted">Only Indian Kulfi available</small>
             </div>
 
             <div class="col-lg-2 col-md-6">
@@ -251,17 +249,11 @@
                         <i class="fas fa-print fa-sm"></i> Print Current Page
                     </a></li>
                     {% with qs=request.GET.urlencode %}
-                    <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_html' %}{% if qs %}?{{ qs }}{% endif %}" target="_blank">
-                        <i class="fas fa-file-code fa-sm"></i> Print HTML Report
-                    </a></li>
                     <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_pdf' %}{% if qs %}?{{ qs }}{% endif %}">
                         <i class="fas fa-file-pdf fa-sm"></i> Export PDF
                     </a></li>
                     <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_excel' %}{% if qs %}?{{ qs }}{% endif %}">
                         <i class="fas fa-file-excel fa-sm"></i> Export Excel
-                    </a></li>
-                    <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_csv' %}{% if qs %}?{{ qs }}{% endif %}">
-                        <i class="fas fa-file-csv fa-sm"></i> Export CSV
                     </a></li>
                     {% endwith %}
                 </ul>
@@ -290,7 +282,7 @@
                 <tr>
                     <td><strong>{{ product.name }}</strong></td>
                     <td>{{ product.sku }}</td>
-                    <td>{{ product.category }}</td>
+                    <td>Indian Kulfi</td>
                     <td>{{ product.display_stock|default:product.current_stock }}</td>
                     <td>{{ product.reorder_level }}</td>
                     <td>₹{{ product.cost_price }}</td>
