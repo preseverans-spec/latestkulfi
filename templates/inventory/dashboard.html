@@ -53,8 +53,8 @@
 <div class="row mb-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header bg-danger text-white">
-                <h5 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Low Stock Alerts</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-exclamation-triangle" style="color: white !important;"></i> Low Stock Alerts</h5>
             </div>
             <div class="card-body">
                 <ul class="list-unstyled mb-0">
@@ -76,8 +76,8 @@
     <!-- Sales Trend -->
     <div class="col-lg-6 mb-4">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="fas fa-chart-area"></i> 7-Day Sales Trend</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-chart-area" style="color: white !important;"></i> 7-Day Sales Trend</h5>
             </div>
             <div class="card-body">
                 <canvas id="salesChart" height="100"></canvas>
@@ -88,8 +88,8 @@
     <!-- Top Products -->
     <div class="col-lg-6 mb-4">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="fas fa-star"></i> Top Products</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-star" style="color: white !important;"></i> Top Products</h5>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -128,8 +128,8 @@
 <div class="row">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="fas fa-bolt"></i> Quick Actions</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
             </div>
             <div class="card-body">
                 <div class="row">
@@ -140,19 +140,19 @@
                         </a>
                     </div>
                     <div class="col-md-3 mb-2">
-                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-primary w-100">
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
                             <i class="fas fa-cogs"></i><br>
                             <small>Quick Operations Entry</small>
                         </a>
                     </div>
                     <div class="col-md-3 mb-2">
-                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-info w-100">
+                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-success w-100">
                             <i class="fas fa-bolt"></i><br>
                             <small>Quick Entry</small>
                         </a>
                     </div>
                     <div class="col-md-3 mb-2">
-                        <a href="{% url 'inventory_list' %}" class="btn btn-secondary w-100">
+                        <a href="{% url 'inventory_list' %}" class="btn btn-success w-100">
                             <i class="fas fa-boxes"></i><br>
                             <small>View Inventory</small>
                         </a>

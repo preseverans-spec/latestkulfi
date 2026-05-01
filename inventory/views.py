@@ -69,7 +69,7 @@ import csv
 import io
 import os
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft
 from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
@@ -2400,6 +2400,19 @@ def sales_history(request):
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
 
+    # If no date range provided at all, show empty state
+    if not start_date and not end_date:
+        context = {
+            'sales': [],
+            'start_date': '',
+            'end_date': '',
+            'total_sales_value': Decimal('0.0'),
+            'total_sales_count': 0,
+            'total_items_sold': 0,
+            'no_filter': True,
+        }
+        return render(request, 'inventory/sales_history.html', context)
+
     if start_date:
         sales_qs = sales_qs.filter(sale_date__gte=start_date)
     if end_date:
@@ -2674,42 +2687,43 @@ def expenses_history(request):
 def _build_expenses_history_context(request):
     """Build expenses history context using optional date-range filters."""
 
-    today = timezone.now().date()
-    start_date_raw = request.GET.get('start_date')
-    end_date_raw = request.GET.get('end_date')
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
 
-    # Calculate current week (Sunday to Saturday)
-    weekday = today.weekday()  # Monday=0, Sunday=6
-    # Find last Sunday
-    days_since_sunday = (today.weekday() + 1) % 7
-    this_sunday = today - timedelta(days=days_since_sunday)
-    # Find next Saturday
-    days_until_saturday = (5 - today.weekday()) % 7 + 1
-    this_saturday = this_sunday + timedelta(days=6)
+    if not start_date_raw and not end_date_raw:
+        return {
+            'entries': OperationsExpense.objects.none(),
+            'start_date': '',
+            'end_date': '',
+            'total_operation_cost': 0,
+            'no_filter': True,
+        }
+
+    start_date = None
+    end_date = None
 
     if start_date_raw:
         try:
             start_date = datetime.fromisoformat(start_date_raw).date()
         except ValueError:
-            start_date = this_sunday
-    else:
-        start_date = this_sunday
+            start_date = None
 
     if end_date_raw:
         try:
             end_date = datetime.fromisoformat(end_date_raw).date()
         except ValueError:
-            end_date = this_saturday
-    else:
-        end_date = this_saturday
+            end_date = None
 
-    if start_date > end_date:
+    if start_date and end_date and start_date > end_date:
         start_date, end_date = end_date, start_date
 
-    entries = OperationsExpense.objects.filter(
-        operation_date__gte=start_date,
-        operation_date__lte=end_date,
-    ).select_related('created_by')
+    entries = OperationsExpense.objects.all()
+    if start_date:
+        entries = entries.filter(operation_date__gte=start_date)
+    if end_date:
+        entries = entries.filter(operation_date__lte=end_date)
+
+    entries = entries.select_related('created_by')
 
     total_operation_cost = entries.aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
@@ -2720,6 +2734,7 @@ def _build_expenses_history_context(request):
         'start_date': start_date,
         'end_date': end_date,
         'total_operation_cost': total_operation_cost,
+        'no_filter': False,
     }
     return context
 
@@ -3364,30 +3379,50 @@ def daily_report(request):
 @login_required
 def weekly_report(request):
     """Weekly sales report"""
-    today = timezone.now().date()
-    start_date = request.GET.get('start_date')
-    end_date = request.GET.get('end_date')
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
 
-    # Default to current week (Sunday to Saturday)
-    if not start_date and not end_date:
-        # If today is Sunday (weekday() == 6), start_date is today
-        # Otherwise, go back to the most recent Sunday
-        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        end_date_obj = start_date_obj + timedelta(days=6)
-        start_date = start_date_obj
-        end_date = end_date_obj
-    else:
-        if not start_date:
-            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        else:
-            start_date = datetime.fromisoformat(start_date).date()
-        if not end_date:
-            end_date = start_date + timedelta(days=6)
-        else:
-            end_date = datetime.fromisoformat(end_date).date()
-    
     salespeople, selected_salesperson, selected_salesperson_id = _get_weekly_salesperson_filter_data(request)
-    context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
+
+    if not start_date_raw and not end_date_raw:
+        context = {
+            'start_date': '',
+            'end_date': '',
+            'total_transactions': 0,
+            'total_revenue': 0,
+            'total_cost': 0,
+            'total_profit': 0,
+            'daily_data': OrderedDict(),
+            'weekly_product_breakdown': [],
+            'no_filter': True,
+        }
+    else:
+        start_date = None
+        end_date = None
+
+        if start_date_raw:
+            try:
+                start_date = datetime.fromisoformat(start_date_raw).date()
+            except ValueError:
+                start_date = None
+
+        if end_date_raw:
+            try:
+                end_date = datetime.fromisoformat(end_date_raw).date()
+            except ValueError:
+                end_date = None
+
+        if start_date and end_date and start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        if start_date is None and end_date is not None:
+            start_date = end_date - timedelta(days=6)
+        if end_date is None and start_date is not None:
+            end_date = start_date + timedelta(days=6)
+
+        context = _build_weekly_report_context(start_date, end_date, salesperson=selected_salesperson)
+        context['no_filter'] = False
+
     context.update({
         'salespeople': salespeople,
         'selected_salesperson': selected_salesperson,
@@ -3399,101 +3434,117 @@ def weekly_report(request):
 @login_required
 def profit_report(request):
     """Profit analysis report"""
-    today = timezone.now().date()
-    start_date = request.GET.get('start_date')
-    end_date = request.GET.get('end_date')
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
 
-    # Default to current week (Sunday to Saturday)
-    if not start_date and not end_date:
-        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        end_date_obj = start_date_obj + timedelta(days=6)
-        start_date = start_date_obj
-        end_date = end_date_obj
+    if not start_date_raw and not end_date_raw:
+        context = {
+            'start_date': '',
+            'end_date': '',
+            'products_profit': [],
+            'total_quantity': 0,
+            'total_revenue': 0,
+            'total_cost': 0,
+            'total_profit': 0,
+            'no_filter': True,
+        }
     else:
-        if not start_date:
-            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        else:
-            start_date = datetime.fromisoformat(start_date).date()
-        if not end_date:
-            end_date = start_date + timedelta(days=6)
-        else:
-            end_date = datetime.fromisoformat(end_date).date()
+        start_date = None
+        end_date = None
 
-    context = _build_profit_report_context(start_date, end_date)
+        if start_date_raw:
+            try:
+                start_date = datetime.fromisoformat(start_date_raw).date()
+            except ValueError:
+                start_date = None
+
+        if end_date_raw:
+            try:
+                end_date = datetime.fromisoformat(end_date_raw).date()
+            except ValueError:
+                end_date = None
+
+        if start_date and end_date and start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        if start_date is None and end_date is not None:
+            start_date = end_date - timedelta(days=6)
+        if end_date is None and start_date is not None:
+            end_date = start_date + timedelta(days=6)
+
+        context = _build_profit_report_context(start_date, end_date)
+        context['no_filter'] = False
+
     return render(request, 'inventory/profit_report.html', context)
 
 
 @login_required
 def income_statement(request):
     """Income Statement (Profit and Loss Statement) for a selected date range."""
-    today = timezone.now().date()
-    start_date = request.GET.get('start_date')
-    end_date = request.GET.get('end_date')
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
 
-    # Default to current week (Sunday to Saturday)
-    if not start_date and not end_date:
-        start_date_obj = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        end_date_obj = start_date_obj + timedelta(days=6)
-        start_date = start_date_obj
-        end_date = end_date_obj
+    if not start_date_raw and not end_date_raw:
+        context = {
+            'start_date': '',
+            'end_date': '',
+            'sales_revenue': 0,
+            'gross_profit': 0,
+            'gross_margin': 0,
+            'operating_expense_total': 0,
+            'operating_income_total': 0,
+            'net_profit_before_tax': 0,
+            'net_margin': 0,
+            'cost_of_goods_sold': 0,
+            'sales_breakdown': [],
+            'operating_income_entries': [],
+            'operating_expense_entries': [],
+            'no_filter': True,
+        }
     else:
-        if not start_date:
-            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        else:
+        start_date = None
+        end_date = None
+
+        if start_date_raw:
             try:
-                start_date = datetime.fromisoformat(start_date).date()
+                start_date = datetime.fromisoformat(start_date_raw).date()
             except ValueError:
-                start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        if not end_date:
+                start_date = None
+        if end_date_raw:
+            try:
+                end_date = datetime.fromisoformat(end_date_raw).date()
+            except ValueError:
+                end_date = None
+
+        if start_date and end_date and start_date > end_date:
+            start_date, end_date = end_date, start_date
+            messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+
+        if start_date is None and end_date is not None:
+            start_date = end_date - timedelta(days=6)
+        if end_date is None and start_date is not None:
             end_date = start_date + timedelta(days=6)
-        else:
-            try:
-                end_date = datetime.fromisoformat(end_date).date()
-            except ValueError:
-                end_date = start_date + timedelta(days=6)
 
-    if start_date > end_date:
-        start_date, end_date = end_date, start_date
-        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+        context = _build_income_statement_context(start_date, end_date)
+        context['no_filter'] = False
 
-    context = _build_income_statement_context(start_date, end_date)
     return render(request, 'inventory/income_statement.html', context)
 
 
 @login_required
 def stock_report(request):
     """Stock-in report by date range for Indian Kulfi and Kulfi Corner."""
-    if request.GET.get('clear') == '1':
-        context = {
-            'start_date': None,
-            'end_date': None,
-            'movement_rows': [],
-            'general_rows': [],
-            'total_entries': 0,
-            'total_quantity': 0,
-            'indian_kulfi_quantity': 0,
-            'kulfi_corner_quantity': 0,
-            'total_purchase_cost': Decimal('0.0'),
-            'include_positive_adjustments': False,
-            'report_mode': 'detailed',
-            'is_cleared': True,
-        }
-        return render(request, 'inventory/stock_report.html', context)
-
-    today = timezone.now().date()
-    start_date_raw = request.GET.get('start_date')
-    end_date_raw = request.GET.get('end_date')
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
         report_mode = 'detailed'
 
-
-    # If no date is selected, show empty page (like daily_report)
     if not start_date_raw and not end_date_raw:
         context = {
-            'start_date': None,
-            'end_date': None,
+            'start_date': '',
+            'end_date': '',
             'movement_rows': [],
             'general_rows': [],
             'total_entries': 0,
@@ -3501,39 +3552,43 @@ def stock_report(request):
             'indian_kulfi_quantity': 0,
             'kulfi_corner_quantity': 0,
             'total_purchase_cost': Decimal('0.0'),
-            'include_positive_adjustments': False,
+            'include_positive_adjustments': include_positive_adjustments,
             'report_mode': report_mode,
-            'is_cleared': False,
+            'no_filter': True,
         }
         return render(request, 'inventory/stock_report.html', context)
-    else:
-        if not start_date_raw:
-            start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        else:
-            try:
-                start_date = datetime.fromisoformat(start_date_raw).date()
-            except ValueError:
-                start_date = today - timedelta(days=today.weekday() + 1) if today.weekday() != 6 else today
-        if not end_date_raw:
-            end_date = start_date + timedelta(days=6)
-        else:
-            try:
-                end_date = datetime.fromisoformat(end_date_raw).date()
-            except ValueError:
-                end_date = start_date + timedelta(days=6)
 
-        if start_date > end_date:
-            start_date, end_date = end_date, start_date
-            messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+    start_date = None
+    end_date = None
 
-        context = _build_stock_report_context(
-            start_date,
-            end_date,
-            include_positive_adjustments=include_positive_adjustments,
-            report_mode=report_mode,
-        )
-        context['is_cleared'] = False
-        return render(request, 'inventory/stock_report.html', context)
+    if start_date_raw:
+        try:
+            start_date = datetime.fromisoformat(start_date_raw).date()
+        except ValueError:
+            start_date = None
+    if end_date_raw:
+        try:
+            end_date = datetime.fromisoformat(end_date_raw).date()
+        except ValueError:
+            end_date = None
+
+    if start_date and end_date and start_date > end_date:
+        start_date, end_date = end_date, start_date
+        messages.info(request, 'Start date and end date were swapped to apply a valid date range.')
+
+    if start_date is None and end_date is not None:
+        start_date = end_date - timedelta(days=6)
+    if end_date is None and start_date is not None:
+        end_date = start_date + timedelta(days=6)
+
+    context = _build_stock_report_context(
+        start_date,
+        end_date,
+        include_positive_adjustments=include_positive_adjustments,
+        report_mode=report_mode,
+    )
+    context['no_filter'] = False
+    return render(request, 'inventory/stock_report.html', context)
 
 
 @login_required

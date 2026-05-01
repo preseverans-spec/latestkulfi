@@ -19,16 +19,14 @@
             </div>
             <div>
                 <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-search"></i> Filter
+                    <i class="fas fa-search"></i> View Sales
                 </button>
             </div>
-            {% if start_date or end_date %}
             <div>
-                <a href="{% url 'sales_history' %}?clear=1" class="btn btn-secondary">
-                    <i class="fas fa-times"></i> Clear Filters
+                <a href="{% url 'sales_history' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-eraser"></i> Clear
                 </a>
             </div>
-            {% endif %}
         </form>
     </div>
 </div>
@@ -63,6 +61,13 @@
         <span class="badge bg-info">{{ total_items_sold }} items sold</span>
     </div>
     <div class="card-body">
+        {% if no_filter %}
+        <div class="text-center py-5">
+            <i class="fas fa-calendar-alt fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Sales History</h4>
+            <p class="text-muted">Choose a start and end date above, then click <strong>View Sales</strong> to see sales activity.</p>
+        </div>
+        {% else %}
         <div class="table-responsive">
             <table class="table table-hover">
                 <thead class="table-light">
@@ -109,7 +114,7 @@
                 </tbody>
             </table>
         </div>
-
+        {% endif %}
     </div>
 </div>
 
@@ -117,8 +122,8 @@
 <div class="row mt-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Quick Actions</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
             </div>
             <div class="card-body">
                 <div class="row">
@@ -129,19 +134,19 @@
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-primary w-100">
-                            <i class="fas fa-bolt"></i><br>
-                            <small>Quick Sales Entry</small>
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cogs"></i><br>
+                            <small>Quick Operations Entry</small>
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'view_sales' %}" class="btn btn-info w-100">
+                        <a href="{% url 'view_sales' %}" class="btn btn-success w-100">
                             <i class="fas fa-calendar-day"></i><br>
                             <small>View Sales by Date</small>
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'dashboard' %}" class="btn btn-secondary w-100">
+                        <a href="{% url 'dashboard' %}" class="btn btn-success w-100">
                             <i class="fas fa-home"></i><br>
                             <small>Dashboard</small>
                         </a>

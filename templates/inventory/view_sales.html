@@ -175,24 +175,24 @@
                         <div class="col-md-4">
                             <div class="card bg-primary text-white">
                                 <div class="card-body text-center">
-                                    <h3 class="card-title">{{ total_sales_count }}</h3>
-                                    <p class="card-text">Total Sales</p>
+                                    <h3 class="card-title" style="color: white !important;">{{ total_sales_count }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Products Sold</p>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-4">
                             <div class="card bg-success text-white">
                                 <div class="card-body text-center">
-                                    <h3 class="card-title">₹{{ total_revenue|floatformat:2 }}</h3>
-                                    <p class="card-text">Total Revenue</p>
+                                    <h3 class="card-title" style="color: white !important;">₹{{ total_revenue|floatformat:2 }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Revenue</p>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-4">
-                            <div class="card bg-info text-white">
+                            <div class="card text-white" style="background: linear-gradient(135deg, #1D3557 0%, #2c4f80 100%);">
                                 <div class="card-body text-center">
-                                    <h3 class="card-title">{{ total_quantity }}</h3>
-                                    <p class="card-text">Total Quantity</p>
+                                    <h3 class="card-title" style="color: white !important;">{{ total_quantity }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Quantity Sold</p>
                                 </div>
                             </div>
                         </div>
@@ -269,8 +269,8 @@
 <div class="row mt-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Quick Actions</h5>
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
             </div>
             <div class="card-body">
                 <div class="row">
@@ -281,19 +281,19 @@
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-primary w-100">
-                            <i class="fas fa-bolt"></i><br>
-                            <small>Quick Sales Entry</small>
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cogs"></i><br>
+                            <small>Quick Operations Entry</small>
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'sales_history' %}" class="btn btn-info w-100">
+                        <a href="{% url 'sales_history' %}" class="btn btn-success w-100">
                             <i class="fas fa-history"></i><br>
                             <small>Sales History</small>
                         </a>
                     </div>
                     <div class="col-md-3">
-                        <a href="{% url 'dashboard' %}" class="btn btn-secondary w-100">
+                        <a href="{% url 'dashboard' %}" class="btn btn-success w-100">
                             <i class="fas fa-home"></i><br>
                             <small>Dashboard</small>
                         </a>

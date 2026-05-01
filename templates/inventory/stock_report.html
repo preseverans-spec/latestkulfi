@@ -5,11 +5,13 @@
 {% block content %}
 <h1 class="page-title"><i class="fas fa-boxes"></i> Stock Report</h1>
 
+{% if not no_filter %}
 <div class="print-header">
     <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
     <h4>Stock Report</h4>
     <p>Range: {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</p>
 </div>
+{% endif %}
 
 <style>
     .print-header {
@@ -77,10 +79,11 @@
                 <button type="submit" name="view_mode" value="detailed" class="btn {% if report_mode == 'detailed' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
                     <i class="fas fa-list"></i> View Detailed Report
                 </button>
-                <a href="{% url 'stock_report' %}?clear=1" class="btn btn-outline-danger">
+                <a href="{% url 'stock_report' %}" class="btn btn-outline-secondary">
                     <i class="fas fa-eraser"></i> Clear
                 </a>
             </form>
+            {% if not no_filter %}
             <div class="btn-group" role="group">
                 <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     <i class="fas fa-print"></i> Print
@@ -97,16 +100,22 @@
                     </a></li>
                 </ul>
             </div>
+            {% endif %}
         </div>
     </div>
 </div>
 
-{% if is_cleared %}
-<div class="alert alert-info mb-4">
-    <i class="fas fa-info-circle"></i> Filters cleared. Select a date range and choose report mode to view data.
+{% if no_filter %}
+<div class="card">
+    <div class="card-body">
+        <div class="text-center py-5">
+            <i class="fas fa-boxes fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Stock Report</h4>
+            <p class="text-muted mb-0">Choose a start and end date above, then select <strong>View General Report</strong> or <strong>View Detailed Report</strong> to see stock data.</p>
+        </div>
+    </div>
 </div>
-{% endif %}
-
+{% else %}
 <div class="row mb-4">
     <div class="col-md-3 mb-3">
         <div class="card stat-card">
@@ -242,4 +251,5 @@
         {% endif %}
     </div>
 </div>
+{% endif %}
 {% endblock %}
