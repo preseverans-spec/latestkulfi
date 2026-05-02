@@ -71,7 +71,7 @@ import os
 import re
 from collections import OrderedDict, defaultdict
 
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption
 from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
 
 
@@ -644,7 +644,18 @@ def inventory_list(request):
     sort_key = sort_options.get(sort_by, 'sku')
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
-    product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+
+    # Custom display order when sorting by SKU (default view)
+    _KULFI_SKU_ORDER = [
+        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
+        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
+        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    ]
+    if sort_attr == 'sku' and not reverse_sort:
+        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
+        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+    else:
+        product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
     # Calculate totals from source data with proper display_stock
     # Recalculate to ensure accuracy with filtered product_list
@@ -787,7 +798,18 @@ def _build_inventory_export_context(request):
     sort_key = sort_options.get(sort_by, 'sku')
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
-    product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+
+    # Custom display order when sorting by SKU (default view)
+    _KULFI_SKU_ORDER = [
+        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
+        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
+        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    ]
+    if sort_attr == 'sku' and not reverse_sort:
+        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
+        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+    else:
+        product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
     total_stock = 0
     total_cost_price = Decimal('0.0')
@@ -1336,6 +1358,16 @@ def inventory_date_history(request):
     # Stock as of end date (Snapshot based on movements)
     stock_snapshot = []
     products = list(Product.objects.filter(is_active=True).order_by('sku'))
+
+    # Apply custom kulfi display order
+    _KULFI_SKU_ORDER = [
+        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
+        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
+        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    ]
+    _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
+    products.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+
     stock_map = get_stock_as_of_date_map(products, end_date)
 
     for product in products:
@@ -2513,6 +2545,15 @@ def quick_operations_entry(request):
             if not expense.created_by_id:
                 expense.created_by = request.user
             expense.save()
+            # Persist any new detail value for future autocomplete suggestions
+            detail_value = (expense.details or '').strip()
+            if detail_value:
+                _predefined_expense_details = [
+                    'Salesperson 1 Salary', 'Salesperson 2 Salary', 'Salesperson 3 Salary',
+                    'Other Salesperson Salary', 'Shortfall', 'Waste', 'Gift', 'Others',
+                ]
+                if detail_value not in _predefined_expense_details:
+                    ExpenseDetailOption.objects.get_or_create(name=detail_value)
             if expense_id:
                 messages.success(request, 'Operation expense entry updated successfully.')
             else:
@@ -2543,6 +2584,15 @@ def quick_operations_entry(request):
     previous_date = selected_date - timedelta(days=1)
     next_date = selected_date + timedelta(days=1)
 
+    _predefined_expense_details = [
+        'Salesperson 1 Salary', 'Salesperson 2 Salary', 'Salesperson 3 Salary',
+        'Other Salesperson Salary', 'Shortfall', 'Waste', 'Gift', 'Others',
+    ]
+    custom_options = list(ExpenseDetailOption.objects.values_list('name', flat=True))
+    expense_detail_options = _predefined_expense_details + [
+        o for o in custom_options if o not in _predefined_expense_details
+    ]
+
     context = {
         'form': form,
         'selected_date': selected_date,
@@ -2554,6 +2604,7 @@ def quick_operations_entry(request):
         'day_operation_income': day_operation_income,
         'day_net_after_operations': day_revenue + day_operation_income - total_day_operation_cost,
         'edit_expense': edit_expense,
+        'expense_detail_options': expense_detail_options,
     }
     return render(request, 'inventory/quick_operations_entry.html', context)
 
@@ -2692,6 +2743,11 @@ def _build_expenses_history_context(request):
     details_filter = (request.GET.get('details') or '').strip()
 
     if not start_date_raw and not end_date_raw and not details_filter:
+        _predefined = [
+            'Salesperson 1 Salary', 'Salesperson 2 Salary', 'Salesperson 3 Salary',
+            'Other Salesperson Salary', 'Shortfall', 'Waste', 'Gift', 'Others',
+        ]
+        _custom = list(ExpenseDetailOption.objects.values_list('name', flat=True))
         return {
             'entries': OperationsExpense.objects.none(),
             'start_date': '',
@@ -2699,6 +2755,7 @@ def _build_expenses_history_context(request):
             'details_filter': '',
             'total_operation_cost': 0,
             'no_filter': True,
+            'expense_detail_options': _predefined + [o for o in _custom if o not in _predefined],
         }
 
     start_date = None
@@ -2733,6 +2790,12 @@ def _build_expenses_history_context(request):
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
 
+    _predefined_expense_details = [
+        'Salesperson 1 Salary', 'Salesperson 2 Salary', 'Salesperson 3 Salary',
+        'Other Salesperson Salary', 'Shortfall', 'Waste', 'Gift', 'Others',
+    ]
+    custom_options = list(ExpenseDetailOption.objects.values_list('name', flat=True))
+
     context = {
         'entries': entries,
         'start_date': start_date,
@@ -2740,6 +2803,7 @@ def _build_expenses_history_context(request):
         'details_filter': details_filter,
         'total_operation_cost': total_operation_cost,
         'no_filter': False,
+        'expense_detail_options': _predefined_expense_details + [o for o in custom_options if o not in _predefined_expense_details],
     }
     return context
 

@@ -336,3 +336,16 @@ class ProfitReport(models.Model):
     
     def __str__(self):
         return f"Profit Report - {self.report_date}"
+
+
+class ExpenseDetailOption(models.Model):
+    """Stores predefined and user-created expense detail labels for the dropdown."""
+    name = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = "Expense Detail Option"
+        verbose_name_plural = "Expense Detail Options"
+
+    def __str__(self):
+        return self.name
