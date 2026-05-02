@@ -2689,12 +2689,14 @@ def _build_expenses_history_context(request):
 
     start_date_raw = (request.GET.get('start_date') or '').strip()
     end_date_raw = (request.GET.get('end_date') or '').strip()
+    details_filter = (request.GET.get('details') or '').strip()
 
-    if not start_date_raw and not end_date_raw:
+    if not start_date_raw and not end_date_raw and not details_filter:
         return {
             'entries': OperationsExpense.objects.none(),
             'start_date': '',
             'end_date': '',
+            'details_filter': '',
             'total_operation_cost': 0,
             'no_filter': True,
         }
@@ -2722,6 +2724,8 @@ def _build_expenses_history_context(request):
         entries = entries.filter(operation_date__gte=start_date)
     if end_date:
         entries = entries.filter(operation_date__lte=end_date)
+    if details_filter:
+        entries = entries.filter(details__icontains=details_filter)
 
     entries = entries.select_related('created_by')
 
@@ -2733,6 +2737,7 @@ def _build_expenses_history_context(request):
         'entries': entries,
         'start_date': start_date,
         'end_date': end_date,
+        'details_filter': details_filter,
         'total_operation_cost': total_operation_cost,
         'no_filter': False,
     }
