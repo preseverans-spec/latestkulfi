@@ -283,12 +283,12 @@
                     <td><strong>{{ product.name }}</strong></td>
                     <td>{{ product.sku }}</td>
                     <td>Indian Kulfi</td>
-                    <td>{{ product.display_stock|default:product.current_stock }}</td>
+                    <td>{{ product.display_stock|default_if_none:product.current_stock }}</td>
                     <td>{{ product.reorder_level }}</td>
                     <td>₹{{ product.cost_price }}</td>
                     <td>₹{{ product.selling_price }}</td>
                     <td>
-                        {% if product.display_stock|default:product.current_stock <= product.reorder_level %}
+                        {% if product.display_stock|default_if_none:product.current_stock <= product.reorder_level %}
                         <span class="badge bg-danger">Low Stock</span>
                         {% else %}
                         <span class="badge bg-success">In Stock</span>

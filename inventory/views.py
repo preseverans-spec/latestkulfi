@@ -1451,6 +1451,7 @@ REPORT_PRODUCT_DISPLAY_ALIASES = {
     'black currant': 'blackcurrant',
     'blackcurrent': 'blackcurrant',
     'butterscotch': 'butter scotch',
+    'elachi': 'elaichi',
     'kesar kajoor': 'kajoor',
 }
 
@@ -1495,6 +1496,76 @@ DAILY_SALES_PRODUCT_DISPLAY_ALIASES = {
     'blackcurrent': 'black currant',
     'straswberry': 'strawberry',
 }
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = [
+    'malai',
+    'pista badam',
+    'chocolate',
+    'kesar badam',
+    'kesar pista',
+    'strawberry',
+    'dry fruit',
+    'black currant',
+    'litchi',
+    'caramel coffee',
+    'rose',
+    'mango malai',
+    'butterscotch',
+    'coconut',
+    'elaichi',
+    'guava',
+    'paan',
+    'kesar kajoor',
+]
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX = {
+    name: index for index, name in enumerate(SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER)
+}
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ALIASES = {
+    'black current': 'black currant',
+    'blackcurrant': 'black currant',
+    'butter scotch': 'butterscotch',
+    'elachi': 'elaichi',
+    'kajoor': 'kesar kajoor',
+    'straswberry': 'strawberry',
+}
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS = {
+    'malai': 'MALAI',
+    'pista badam': 'PISTA BADAM',
+    'chocolate': 'CHOCOLATE',
+    'kesar badam': 'KESAR BADAM',
+    'kesar pista': 'KESAR PISTA',
+    'strawberry': 'STRAWBERRY',
+    'dry fruit': 'DRY FRUIT',
+    'black currant': 'BLACK CURRANT',
+    'litchi': 'LITCHI',
+    'caramel coffee': 'CARAMEL COFFEE',
+    'rose': 'ROSE',
+    'mango malai': 'MANGO MALAI',
+    'butterscotch': 'BUTTERSCOTCH',
+    'coconut': 'COCONUT',
+    'elaichi': 'ELAICHI',
+    'guava': 'GUAVA',
+    'paan': 'PAAN',
+    'kesar kajoor': 'KESAR KAJOOR',
+}
+
+
+def get_sales_stock_taken_product_name_key(product_name):
+    normalized_name = (product_name or '').strip().lower()
+    return SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ALIASES.get(normalized_name, normalized_name)
+
+
+def get_sales_stock_taken_product_sort_key(product_name, sort_sku=''):
+    canonical_name = get_sales_stock_taken_product_name_key(product_name)
+    return (
+        SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX.get(canonical_name, len(SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX)),
+        canonical_name,
+        sort_sku or '',
+    )
+
+
+def get_sales_stock_taken_product_display_name(product_name):
+    canonical_name = get_sales_stock_taken_product_name_key(product_name)
+    return SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS.get(canonical_name, canonical_name.upper())
 
 
 def group_active_products_by_name():
@@ -1583,12 +1654,8 @@ def build_grouped_products_for_sales_date(selected_sales_date):
     grouped_products_for_form = []
     grouped_items = sorted(
         grouped_products.items(),
-        key=lambda item: (
-            DAILY_SALES_PRODUCT_DISPLAY_INDEX.get(
-                DAILY_SALES_PRODUCT_DISPLAY_ALIASES.get(item[0].strip().lower(), item[0].strip().lower()),
-                len(DAILY_SALES_PRODUCT_DISPLAY_INDEX)
-            ),
-            item[0].strip().lower(),
+        key=lambda item: get_sales_stock_taken_product_sort_key(
+            item[0],
             min((product.sku for product in item[1]), default='ZZZ999'),
         )
     )
@@ -1600,8 +1667,8 @@ def build_grouped_products_for_sales_date(selected_sales_date):
             if products_in_group else Decimal('0.0')
         )
         grouped_products_for_form.append({
-            'key': group_name.lower(),
-            'name': group_name,
+            'key': get_sales_stock_taken_product_name_key(group_name),
+            'name': get_sales_stock_taken_product_display_name(group_name),
             'stock': total_stock,
             'avg_price': avg_price,
         })
@@ -1650,7 +1717,7 @@ def sales_stock_taken_entry(request):
         errors = []
 
         existing_entries = {
-            item.product_key: item
+            get_sales_stock_taken_product_name_key(item.product_key or item.product_name): item
             for item in SalesStockTaken.objects.filter(
                 salesperson=target_user,
                 sales_date=selected_sales_date,
@@ -1681,17 +1748,26 @@ def sales_stock_taken_entry(request):
                 continue
 
             if stock_taken_count > 0:
-                SalesStockTaken.objects.update_or_create(
-                    salesperson=target_user,
-                    sales_date=selected_sales_date,
-                    product_key=product_key,
-                    defaults={
-                        'product_name': product_info['name'],
-                        'avg_unit_price': product_info['avg_price'],
-                        'combined_stock': product_info['stock'],
-                        'stock_taken_count': stock_taken_count,
-                    },
-                )
+                existing_entry = existing_entries.get(product_key)
+                if existing_entry:
+                    existing_entry.product_key = product_key
+                    existing_entry.product_name = product_info['name']
+                    existing_entry.avg_unit_price = product_info['avg_price']
+                    existing_entry.combined_stock = product_info['stock']
+                    existing_entry.stock_taken_count = stock_taken_count
+                    existing_entry.save()
+                else:
+                    SalesStockTaken.objects.update_or_create(
+                        salesperson=target_user,
+                        sales_date=selected_sales_date,
+                        product_key=product_key,
+                        defaults={
+                            'product_name': product_info['name'],
+                            'avg_unit_price': product_info['avg_price'],
+                            'combined_stock': product_info['stock'],
+                            'stock_taken_count': stock_taken_count,
+                        },
+                    )
                 saved_count += 1
             else:
                 existing_entry = existing_entries.get(product_key)
@@ -1715,7 +1791,7 @@ def sales_stock_taken_entry(request):
         return redirect(redirect_url)
 
     existing_entries = {
-        item.product_key: item
+        get_sales_stock_taken_product_name_key(item.product_key or item.product_name): item
         for item in SalesStockTaken.objects.filter(
             salesperson=target_user,
             sales_date=selected_sales_date,
@@ -1724,9 +1800,17 @@ def sales_stock_taken_entry(request):
 
     admin_day_entries = None
     if request.user.is_staff:
-        admin_day_entries = SalesStockTaken.objects.filter(
-            sales_date=selected_sales_date,
-        ).select_related('salesperson').order_by('salesperson__username', 'product_name')
+        admin_day_entries = sorted(
+            SalesStockTaken.objects.filter(
+                sales_date=selected_sales_date,
+            ).select_related('salesperson'),
+            key=lambda entry: (
+                entry.salesperson.username,
+                *get_sales_stock_taken_product_sort_key(entry.product_name),
+            ),
+        )
+        for entry in admin_day_entries:
+            entry.display_product_name = get_sales_stock_taken_product_display_name(entry.product_name)
 
     total_taken_count = 0
     total_estimated_value = Decimal('0.0')
@@ -1761,7 +1845,11 @@ def quick_sales_entry(request):
     """Daily sales sheet by product name (manufacturer-agnostic)."""
     def get_sales_groups():
         """Return grouped active products across all categories."""
-        return group_active_products_by_name()
+        grouped = defaultdict(list)
+        for product in Product.objects.filter(is_active=True):
+            key = get_sales_stock_taken_product_name_key(normalize_sales_product_name(product.name))
+            grouped[key].append(product)
+        return grouped
 
 
     if request.method == 'POST':
@@ -1836,7 +1924,7 @@ def quick_sales_entry(request):
                             continue
 
                 stock_taken_lookup = {
-                    item.product_key: item.stock_taken_count
+                    get_sales_stock_taken_product_name_key(item.product_key or item.product_name): item.stock_taken_count
                     for item in SalesStockTaken.objects.filter(
                         salesperson=request.user,
                         sales_date=fallback_sale_date,
@@ -2096,7 +2184,7 @@ def quick_sales_entry(request):
         product['stock'] = sum(stock_map.get(item.id, 0) for item in candidates)
 
     stock_taken_map = {
-        item.product_key: item.stock_taken_count
+        get_sales_stock_taken_product_name_key(item.product_key or item.product_name): item.stock_taken_count
         for item in SalesStockTaken.objects.filter(
             salesperson=request.user,
             sales_date=selected_sales_date,
@@ -2153,6 +2241,9 @@ def view_sales(request):
         except ValueError:
             selected_date = timezone.now().date()
 
+    previous_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
+
     salespeople = User.objects.filter(
         id__in=Sales.objects.filter(
             sale_date=selected_date,
@@ -2193,6 +2284,8 @@ def view_sales(request):
 
     context = {
         'selected_date': selected_date,
+        'previous_date': previous_date,
+        'next_date': next_date,
         'selected_salesperson_id': selected_salesperson_id,
         'selected_salesperson': salesperson_filter,
         'salespeople': salespeople,

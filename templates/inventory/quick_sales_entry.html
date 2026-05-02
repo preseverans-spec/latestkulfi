@@ -25,6 +25,37 @@
     color: #842029;
 }
 
+.daily-sales-summary-card {
+    border: 0;
+    color: #ffffff;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.daily-sales-summary-card strong,
+.daily-sales-summary-card span {
+    color: #ffffff;
+}
+
+.daily-sales-summary-card.summary-stock-taken {
+    background: #334155;
+}
+
+.daily-sales-summary-card.summary-items-sold {
+    background: #1e3a8a;
+}
+
+.daily-sales-summary-card.summary-sales-count {
+    background: #166534;
+}
+
+.daily-sales-summary-card.summary-balance-count {
+    background: #312e81;
+}
+
+.daily-sales-summary-card.summary-selling-price {
+    background: #92400e;
+}
+
 </style>
 
 <h1 class="page-title"><i class="fas fa-bolt"></i> Daily Sales Sheet</h1>
@@ -139,43 +170,43 @@
                 <div class="row g-2">
                     {% if not user.is_staff %}
                     <div class="col-md-6 col-lg-2">
-                        <div class="alert alert-secondary py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-stock-taken py-2 mb-0">
                             <strong>Total Stock Taken:</strong> <span id="summary-total-stock-taken">{{ total_stock_taken_for_date }}</span>
                         </div>
                     </div>
                     <div class="col-md-6 col-lg-2">
-                        <div class="alert alert-info py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-items-sold py-2 mb-0">
                             <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
                         </div>
                     </div>
                     <div class="col-md-6 col-lg-2">
-                        <div class="alert alert-success py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-sales-count py-2 mb-0">
                             <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
                         </div>
                     </div>
                     <div class="col-md-6 col-lg-3">
-                        <div class="alert alert-primary py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-balance-count py-2 mb-0">
                             <strong>Total Balance Count:</strong> <span id="summary-balance-count">0</span>
                         </div>
                     </div>
                     <div class="col-md-12 col-lg-3">
-                        <div class="alert alert-warning py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-selling-price py-2 mb-0">
                             <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
                         </div>
                     </div>
                     {% else %}
                     <div class="col-md-4">
-                        <div class="alert alert-info py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-items-sold py-2 mb-0">
                             <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
                         </div>
                     </div>
                     <div class="col-md-4">
-                        <div class="alert alert-success py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-sales-count py-2 mb-0">
                             <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
                         </div>
                     </div>
                     <div class="col-md-4">
-                        <div class="alert alert-warning py-2 mb-0">
+                        <div class="alert daily-sales-summary-card summary-selling-price py-2 mb-0">
                             <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
                         </div>
                     </div>

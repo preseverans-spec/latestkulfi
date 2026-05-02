@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+import re
 
 from django.contrib.auth.models import User
 from django.test import Client, TestCase
@@ -7,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from inventory.models import Inventory, OperationsExpense, OperationsIncome, Product, Sales
+from inventory.models import Inventory, OperationsExpense, OperationsIncome, Product, Sales, SalesStockTaken
 
 
 class SyncApiTests(TestCase):
@@ -223,6 +224,242 @@ class SyncApiTests(TestCase):
 		self.assertEqual(bad_response.status_code, 400)
 		self.assertEqual(ok_response.status_code, 200)
 		self.assertEqual(ok_response.data['data']['received'], 1)
+
+	def test_sales_stock_taken_admin_summary_uses_fixed_product_order(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		sales_date = timezone.datetime(2026, 4, 15).date()
+
+		SalesStockTaken.objects.create(
+			salesperson=self.sales_user,
+			sales_date=sales_date,
+			product_key='guava',
+			product_name='Guava',
+			avg_unit_price=Decimal('28.00'),
+			combined_stock=10,
+			stock_taken_count=1,
+		)
+		SalesStockTaken.objects.create(
+			salesperson=self.sales_user,
+			sales_date=sales_date,
+			product_key='coconut',
+			product_name='Coconut',
+			avg_unit_price=Decimal('26.00'),
+			combined_stock=10,
+			stock_taken_count=1,
+		)
+		SalesStockTaken.objects.create(
+			salesperson=self.sales_user,
+			sales_date=sales_date,
+			product_key='elaichi',
+			product_name='Elaichi',
+			avg_unit_price=Decimal('26.00'),
+			combined_stock=10,
+			stock_taken_count=1,
+		)
+
+		response = client.get(reverse('sales_stock_taken_entry'), {'sales_date': sales_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(
+			[entry.display_product_name for entry in response.context['admin_day_entries']],
+			['COCONUT', 'ELAICHI', 'GUAVA'],
+		)
+
+	def test_sales_stock_taken_product_list_uses_requested_labels_and_order(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		sales_date = timezone.datetime(2026, 4, 16).date()
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+		expected_names = [
+			'MALAI',
+			'PISTA BADAM',
+			'CHOCOLATE',
+			'KESAR BADAM',
+			'KESAR PISTA',
+			'STRAWBERRY',
+			'DRY FRUIT',
+			'BLACK CURRANT',
+			'LITCHI',
+			'CARAMEL COFFEE',
+			'ROSE',
+			'MANGO MALAI',
+			'BUTTERSCOTCH',
+			'COCONUT',
+			'ELAICHI',
+			'GUAVA',
+			'PAAN',
+			'KESAR KAJOOR',
+		]
+		products = [
+			('Malai', 'IK-101'),
+			('Pista Badam', 'IK-102'),
+			('Chocolate', 'IK-103'),
+			('Kesar Badam', 'IK-104'),
+			('Kesar Pista', 'IK-105'),
+			('Strawberry', 'IK-106'),
+			('Dry Fruit', 'IK-107'),
+			('Blackcurrant', 'IK-108'),
+			('Litchi', 'IK-109'),
+			('Caramel Coffee', 'IK-110'),
+			('Rose', 'IK-111'),
+			('Mango Malai', 'IK-112'),
+			('Butterscotch', 'IK-113'),
+			('Coconut', 'IK-114'),
+			('Elaichi', 'IK-115'),
+			('Guava', 'IK-116'),
+			('Paan', 'IK-117'),
+			('Kesar Kajoor', 'IK-118'),
+		]
+
+		for name, sku in products:
+			Product.objects.create(
+				name=name,
+				sku=sku,
+				category='Kulfi',
+				cost_price='12.00',
+				selling_price='20.00',
+				current_stock=10,
+				reorder_level=2,
+				is_active=True,
+			)
+
+		response = client.get(reverse('sales_stock_taken_entry'), {'sales_date': sales_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual([product['name'] for product in response.context['products']], expected_names)
+
+	def test_sales_stock_taken_treats_elachi_as_elaichi(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		sales_date = timezone.datetime(2026, 4, 17).date()
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+
+		for name, sku in [
+			('Coconut', 'IK-201'),
+			('Elachi', 'IK-202'),
+			('Guava', 'IK-203'),
+			('Kesar Kajoor', 'IK-204'),
+		]:
+			Product.objects.create(
+				name=name,
+				sku=sku,
+				category='Kulfi',
+				cost_price='12.00',
+				selling_price='20.00',
+				current_stock=10,
+				reorder_level=2,
+				is_active=True,
+			)
+
+		response = client.get(reverse('sales_stock_taken_entry'), {'sales_date': sales_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(
+			[product['name'] for product in response.context['products']],
+			['COCONUT', 'ELAICHI', 'GUAVA', 'KESAR KAJOOR'],
+		)
+
+	def test_quick_sales_entry_treats_elachi_as_elaichi_for_combined_stock(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		sales_date = timezone.datetime(2026, 4, 18).date()
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+
+		products = {}
+		for name, sku, quantity in [
+			('Coconut', 'IK-301', 20),
+			('Elachi', 'IK-302', 29),
+			('Guava', 'IK-303', 13),
+		]:
+			product = Product.objects.create(
+				name=name,
+				sku=sku,
+				category='Kulfi',
+				cost_price=Decimal('12.00'),
+				selling_price=Decimal('20.00'),
+				current_stock=quantity,
+				reorder_level=2,
+				is_active=True,
+			)
+			products[name] = product
+			Inventory.objects.create(
+				product=product,
+				movement_type='IN',
+				quantity=quantity,
+				unit_cost=Decimal('12.00'),
+				movement_date=sales_date,
+				reference_document='test',
+				created_by=self.admin_user,
+			)
+
+		response = client.get(reverse('quick_sales_entry'), {'sales_date': sales_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		product_rows = response.context['products']
+		self.assertEqual(response.context['total_combined_stock'], 62)
+		self.assertEqual(
+			[(product['name'], product['stock']) for product in product_rows],
+			[('COCONUT', 20), ('ELAICHI', 29), ('GUAVA', 13)],
+		)
+
+	def test_inventory_list_keeps_historical_zero_stock_in_rows(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+		selected_date = timezone.datetime(2026, 4, 25).date()
+		history_product = Product.objects.create(
+			name='Historic Zero Test',
+			sku='IK-401',
+			category='Kulfi',
+			cost_price=Decimal('12.00'),
+			selling_price=Decimal('20.00'),
+			current_stock=10,
+			reorder_level=2,
+			is_active=True,
+		)
+		Inventory.objects.create(
+			product=history_product,
+			movement_type='IN',
+			quantity=10,
+			unit_cost=Decimal('12.00'),
+			movement_date=timezone.datetime(2026, 5, 2).date(),
+			reference_document='test',
+			created_by=self.admin_user,
+		)
+
+		response = client.get(reverse('inventory_list'), {'as_of_date': selected_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.context['total_stock'], 0)
+		content = response.content.decode()
+		self.assertRegex(
+			content,
+			re.compile(r'Historic Zero Test</strong></td>\s*<td>IK-401</td>\s*<td>Indian Kulfi</td>\s*<td>0</td>', re.S),
+		)
+
+	def test_view_sales_sort_treats_elachi_as_elaichi(self):
+		from inventory.views import get_report_product_sort_key
+
+		names = ['Guava', 'Elachi', 'Coconut']
+		sorted_names = sorted(names, key=lambda name: get_report_product_sort_key(name))
+
+		self.assertEqual(sorted_names, ['Coconut', 'Elachi', 'Guava'])
+
+	def test_view_sales_previous_next_day_links_use_adjacent_dates(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		selected_date = timezone.datetime(2026, 4, 25).date()
+
+		response = client.get(reverse('view_sales'), {'date': selected_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, '?date=2026-04-24')
+		self.assertContains(response, '?date=2026-04-26')
 
 	def test_admin_inventory_update_adjusts_stock_correctly(self):
 		self.authenticate(self.admin_user)

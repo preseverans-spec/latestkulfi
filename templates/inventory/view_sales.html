@@ -140,10 +140,10 @@
                         </ul>
                     </div>
                     {% endif %}
-                    <a href="?date={{ selected_date|date:'Y-m-d'|add:'-1' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                    <a href="?date={{ previous_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
                         <i class="fas fa-chevron-left"></i> Previous Day
                     </a>
-                    <a href="?date={{ selected_date|date:'Y-m-d'|add:'1' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                    <a href="?date={{ next_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
                         Next Day <i class="fas fa-chevron-right"></i>
                     </a>
                 </div>
