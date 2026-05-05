@@ -97,4 +97,5 @@ urlpatterns = [
     path('inventory/invoices/upload/', views.stock_invoice_upload, name='stock_invoice_upload'),
     path('inventory/invoices/<int:invoice_id>/edit/', views.stock_invoice_edit, name='stock_invoice_edit'),
     path('inventory/invoices/<int:invoice_id>/delete/', views.stock_invoice_delete, name='stock_invoice_delete'),
+    path('inventory/invoices/<int:invoice_id>/serve/', views.stock_invoice_serve, name='stock_invoice_serve'),
 ]

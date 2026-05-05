@@ -55,7 +55,7 @@ from django.db.models import Sum, Count, Q, F, DecimalField, OuterRef, Subquery,
 from django.db.models.functions import Coalesce
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.utils import timezone
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, FileResponse, Http404
 from django.conf import settings
 from datetime import datetime, timedelta, date
 from decimal import Decimal
@@ -5507,3 +5507,27 @@ def stock_invoice_delete(request, invoice_id):
         return redirect('stock_invoices_list')
 
     return render(request, 'inventory/stock_invoice_confirm_delete.html', {'invoice': invoice})
+
+
+@login_required
+def stock_invoice_serve(request, invoice_id):
+    """Serve the invoice document file directly (works in production without DEBUG=True)."""
+    if not request.user.is_staff:
+        raise Http404
+
+    invoice = get_object_or_404(StockInvoice, pk=invoice_id)
+
+    if not invoice.document:
+        raise Http404
+
+    try:
+        import mimetypes
+        file_path = invoice.document.path
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            mime_type = 'application/octet-stream'
+        response = FileResponse(open(file_path, 'rb'), content_type=mime_type)
+        response['Content-Disposition'] = f'inline; filename="{invoice.document.name.split("/")[-1]}"'
+        return response
+    except FileNotFoundError:
+        raise Http404
