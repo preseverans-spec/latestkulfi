@@ -832,9 +832,6 @@
                         <a href="{% url 'stock_order' %}" class="sub-item {% if request.resolver_match.url_name == 'stock_order' %}active{% endif %}">
                             <i class="fas fa-clipboard-list"></i> New Stock Order
                         </a>
-                        <a href="{% url 'stock_invoices_list' %}" class="sub-item {% if request.resolver_match.url_name == 'stock_invoices_list' or request.resolver_match.url_name == 'stock_invoice_upload' or request.resolver_match.url_name == 'stock_invoice_edit' %}active{% endif %}">
-                            <i class="fas fa-file-invoice"></i> Stock Invoices
-                        </a>
                     </div>
 
                     <!-- Kulfi Sales Section -->
