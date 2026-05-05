@@ -374,9 +374,6 @@ class StockInvoice(models.Model):
     invoice_date = models.DateField(default=timezone.now, help_text="Date on the invoice")
     amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Total invoice amount (optional)")
     document = models.FileField(upload_to=stock_invoice_upload_path, help_text="PDF, image, or other document file")
-    drive_file_id = models.CharField(max_length=255, blank=True, help_text="Google Drive file ID (optional)")
-    drive_mime_type = models.CharField(max_length=120, blank=True, help_text="Google Drive MIME type (optional)")
-    original_filename = models.CharField(max_length=255, blank=True, help_text="Original uploaded filename")
     notes = models.TextField(blank=True)
 
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='stock_invoices')
