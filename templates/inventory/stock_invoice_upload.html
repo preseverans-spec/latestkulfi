@@ -51,11 +51,11 @@
 
             <div class="mb-3">
                 <label class="form-label fw-semibold">Document File <span class="text-danger">{% if not invoice %}*{% endif %}</span></label>
-                {% if invoice and invoice.document %}
+                {% if invoice and (invoice.document or invoice.drive_file_id) %}
                 <div class="mb-2">
                     <small class="text-muted">Current file:</small>
-                    <a href="{{ invoice.document.url }}" target="_blank" class="btn btn-outline-primary btn-sm ms-2">
-                        <i class="fas fa-eye"></i> View Current File
+                    <a href="{% url 'stock_invoice_serve' invoice.pk %}" class="btn btn-outline-primary btn-sm ms-2">
+                        <i class="fas fa-download"></i> Download Current File
                     </a>
                 </div>
                 {% endif %}

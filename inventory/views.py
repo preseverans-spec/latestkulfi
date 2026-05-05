@@ -73,6 +73,12 @@ from collections import OrderedDict, defaultdict
 
 from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption, StockInvoice
 from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm, StockInvoiceForm
+from .google_drive_service import (
+    drive_is_enabled,
+    upload_invoice_to_drive,
+    download_invoice_from_drive,
+    delete_invoice_from_drive,
+)
 
 
 # Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
@@ -5455,6 +5461,24 @@ def stock_invoice_upload(request):
         if form.is_valid():
             invoice = form.save(commit=False)
             invoice.uploaded_by = request.user
+            uploaded_file = request.FILES.get('document')
+
+            if uploaded_file:
+                invoice.original_filename = uploaded_file.name
+
+            if uploaded_file and drive_is_enabled():
+                try:
+                    drive_meta = upload_invoice_to_drive(
+                        uploaded_file,
+                        filename=uploaded_file.name,
+                        content_type=getattr(uploaded_file, 'content_type', None),
+                    )
+                    invoice.drive_file_id = drive_meta.get('id', '')
+                    invoice.drive_mime_type = drive_meta.get('mime_type', '')
+                except Exception as exc:
+                    messages.error(request, f'Google Drive upload failed: {exc}')
+                    return render(request, 'inventory/stock_invoice_upload.html', {'form': form})
+
             invoice.save()
             messages.success(request, f'Invoice "{invoice.title}" uploaded successfully.')
             return redirect('stock_invoices_list')
@@ -5476,7 +5500,40 @@ def stock_invoice_edit(request, invoice_id):
     if request.method == 'POST':
         form = StockInvoiceForm(request.POST, request.FILES, instance=invoice)
         if form.is_valid():
-            form.save()
+            updated_invoice = form.save(commit=False)
+            uploaded_file = request.FILES.get('document')
+            previous_drive_file_id = invoice.drive_file_id
+
+            if uploaded_file:
+                updated_invoice.original_filename = uploaded_file.name
+
+            if uploaded_file and drive_is_enabled():
+                try:
+                    drive_meta = upload_invoice_to_drive(
+                        uploaded_file,
+                        filename=uploaded_file.name,
+                        content_type=getattr(uploaded_file, 'content_type', None),
+                    )
+                    updated_invoice.drive_file_id = drive_meta.get('id', '')
+                    updated_invoice.drive_mime_type = drive_meta.get('mime_type', '')
+                except Exception as exc:
+                    messages.error(request, f'Google Drive upload failed: {exc}')
+                    return render(request, 'inventory/stock_invoice_upload.html', {'form': form, 'invoice': invoice})
+
+            updated_invoice.save()
+
+            if (
+                uploaded_file and
+                drive_is_enabled() and
+                previous_drive_file_id and
+                previous_drive_file_id != updated_invoice.drive_file_id
+            ):
+                try:
+                    delete_invoice_from_drive(previous_drive_file_id)
+                except Exception:
+                    # Keep edit flow non-blocking if old remote file cannot be deleted.
+                    pass
+
             messages.success(request, f'Invoice "{invoice.title}" updated successfully.')
             return redirect('stock_invoices_list')
     else:
@@ -5496,12 +5553,21 @@ def stock_invoice_delete(request, invoice_id):
 
     if request.method == 'POST':
         title = invoice.title
+        if invoice.drive_file_id and drive_is_enabled():
+            try:
+                delete_invoice_from_drive(invoice.drive_file_id)
+            except Exception:
+                # Do not block delete if remote file removal fails.
+                pass
+
         # Remove the physical file
         if invoice.document:
-            import os
-            file_path = invoice.document.path
-            if os.path.isfile(file_path):
-                os.remove(file_path)
+            try:
+                file_path = invoice.document.path
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
         invoice.delete()
         messages.success(request, f'Invoice "{title}" deleted.')
         return redirect('stock_invoices_list')
@@ -5511,11 +5577,29 @@ def stock_invoice_delete(request, invoice_id):
 
 @login_required
 def stock_invoice_serve(request, invoice_id):
-    """Serve the invoice document file directly (works in production without DEBUG=True)."""
+    """Download invoice file from Google Drive when available, else local storage."""
     if not request.user.is_staff:
         raise Http404
 
     invoice = get_object_or_404(StockInvoice, pk=invoice_id)
+
+    if not invoice.document:
+        if not invoice.drive_file_id:
+            raise Http404
+
+    if invoice.drive_file_id and drive_is_enabled():
+        try:
+            drive_file = download_invoice_from_drive(invoice.drive_file_id)
+            download_name = invoice.original_filename or drive_file.get('name') or 'invoice-file'
+            response = HttpResponse(
+                drive_file.get('content', b''),
+                content_type=drive_file.get('mime_type') or 'application/octet-stream',
+            )
+            response['Content-Disposition'] = f'attachment; filename="{download_name}"'
+            return response
+        except Exception:
+            # Fall back to local storage if Drive fetch fails.
+            pass
 
     if not invoice.document:
         raise Http404
