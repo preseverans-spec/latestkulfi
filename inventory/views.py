@@ -5526,8 +5526,8 @@ def stock_invoice_serve(request, invoice_id):
         mime_type, _ = mimetypes.guess_type(file_path)
         if not mime_type:
             mime_type = 'application/octet-stream'
-        response = FileResponse(open(file_path, 'rb'), content_type=mime_type)
-        response['Content-Disposition'] = f'inline; filename="{invoice.document.name.split("/")[-1]}"'
+        filename = invoice.document.name.split('/')[-1]
+        response = FileResponse(open(file_path, 'rb'), content_type=mime_type, as_attachment=True, filename=filename)
         return response
     except FileNotFoundError:
         raise Http404

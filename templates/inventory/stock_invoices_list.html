@@ -77,8 +77,8 @@
                         <td>{% if inv.amount %}₹{{ inv.amount|floatformat:2 }}{% else %}—{% endif %}</td>
                         <td>
                             {% if inv.document %}
-                            <a href="{% url 'stock_invoice_serve' inv.pk %}" target="_blank" class="btn btn-outline-primary btn-sm">
-                                <i class="fas fa-eye"></i> View
+                            <a href="{% url 'stock_invoice_serve' inv.pk %}" class="btn btn-outline-success btn-sm" title="Download">
+                                <i class="fas fa-download"></i>
                             </a>
                             {% else %}—{% endif %}
                         </td>
