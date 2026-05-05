@@ -91,4 +91,10 @@ urlpatterns = [
     path('users/<int:user_id>/delete/', views.admin_only_view(views.delete_user), name='delete_user'),
     # Forgot Password AJAX endpoint
     path('forgot-password/', views.send_forgot_password_email, name='send_forgot_password_email'),
+
+    # Stock Invoices
+    path('inventory/invoices/', views.stock_invoices_list, name='stock_invoices_list'),
+    path('inventory/invoices/upload/', views.stock_invoice_upload, name='stock_invoice_upload'),
+    path('inventory/invoices/<int:invoice_id>/edit/', views.stock_invoice_edit, name='stock_invoice_edit'),
+    path('inventory/invoices/<int:invoice_id>/delete/', views.stock_invoice_delete, name='stock_invoice_delete'),
 ]

@@ -71,8 +71,8 @@ import os
 import re
 from collections import OrderedDict, defaultdict
 
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption
-from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
+from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption, StockInvoice
+from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm, StockInvoiceForm
 
 
 # Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
@@ -5391,3 +5391,119 @@ def print_sales_excel(request):
     except Exception as e:
         messages.error(request, f'Error generating Excel: {str(e)}')
         return redirect('view_sales')
+
+
+# ==================== STOCK INVOICES ====================
+
+@login_required
+def stock_invoices_list(request):
+    """List all uploaded stock invoices (admin only)."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to view stock invoices.')
+        return redirect('dashboard')
+
+    invoices = StockInvoice.objects.select_related('uploaded_by').all()
+
+    # Optional filters
+    doc_type = request.GET.get('doc_type', '')
+    supplier = request.GET.get('supplier', '')
+    date_from = request.GET.get('date_from', '')
+    date_to = request.GET.get('date_to', '')
+
+    if doc_type:
+        invoices = invoices.filter(document_type=doc_type)
+    if supplier:
+        invoices = invoices.filter(supplier__icontains=supplier)
+    if date_from:
+        try:
+            invoices = invoices.filter(invoice_date__gte=date_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            invoices = invoices.filter(invoice_date__lte=date_to)
+        except ValueError:
+            pass
+
+    paginator = Paginator(invoices, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    document_type_choices = StockInvoice.DOCUMENT_TYPE_CHOICES
+
+    return render(request, 'inventory/stock_invoices_list.html', {
+        'page_obj': page_obj,
+        'document_type_choices': document_type_choices,
+        'filters': {
+            'doc_type': doc_type,
+            'supplier': supplier,
+            'date_from': date_from,
+            'date_to': date_to,
+        },
+    })
+
+
+@login_required
+def stock_invoice_upload(request):
+    """Upload a new stock invoice document (admin only)."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to upload stock invoices.')
+        return redirect('dashboard')
+
+    if request.method == 'POST':
+        form = StockInvoiceForm(request.POST, request.FILES)
+        if form.is_valid():
+            invoice = form.save(commit=False)
+            invoice.uploaded_by = request.user
+            invoice.save()
+            messages.success(request, f'Invoice "{invoice.title}" uploaded successfully.')
+            return redirect('stock_invoices_list')
+    else:
+        form = StockInvoiceForm()
+
+    return render(request, 'inventory/stock_invoice_upload.html', {'form': form})
+
+
+@login_required
+def stock_invoice_edit(request, invoice_id):
+    """Edit an existing stock invoice (admin only)."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to edit stock invoices.')
+        return redirect('dashboard')
+
+    invoice = get_object_or_404(StockInvoice, pk=invoice_id)
+
+    if request.method == 'POST':
+        form = StockInvoiceForm(request.POST, request.FILES, instance=invoice)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f'Invoice "{invoice.title}" updated successfully.')
+            return redirect('stock_invoices_list')
+    else:
+        form = StockInvoiceForm(instance=invoice)
+
+    return render(request, 'inventory/stock_invoice_upload.html', {'form': form, 'invoice': invoice})
+
+
+@login_required
+def stock_invoice_delete(request, invoice_id):
+    """Delete a stock invoice and its file (admin only)."""
+    if not request.user.is_staff:
+        messages.error(request, 'You do not have permission to delete stock invoices.')
+        return redirect('dashboard')
+
+    invoice = get_object_or_404(StockInvoice, pk=invoice_id)
+
+    if request.method == 'POST':
+        title = invoice.title
+        # Remove the physical file
+        if invoice.document:
+            import os
+            file_path = invoice.document.path
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        invoice.delete()
+        messages.success(request, f'Invoice "{title}" deleted.')
+        return redirect('stock_invoices_list')
+
+    return render(request, 'inventory/stock_invoice_confirm_delete.html', {'invoice': invoice})

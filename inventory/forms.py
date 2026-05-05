@@ -3,7 +3,7 @@ import re
 from django import forms
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import Product, Sales, OperationsExpense, OperationsIncome
+from .models import Product, Sales, OperationsExpense, OperationsIncome, StockInvoice
 
 
 
@@ -230,3 +230,23 @@ class UserManagementForm(forms.ModelForm):
         if commit:
             user.save()
         return user
+
+
+class StockInvoiceForm(forms.ModelForm):
+    class Meta:
+        model = StockInvoice
+        fields = ['title', 'document_type', 'supplier', 'invoice_date', 'amount', 'document', 'notes']
+        widgets = {
+            'title': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'e.g. INV-2024-001'}),
+            'document_type': forms.Select(attrs={'class': 'form-control'}),
+            'supplier': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Supplier / Manufacturer'}),
+            'invoice_date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
+            'amount': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Total amount (optional)', 'step': '0.01', 'min': '0'}),
+            'document': forms.ClearableFileInput(attrs={'class': 'form-control'}),
+            'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Additional notes…'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['invoice_date'].initial = timezone.now().date()
+        self.fields['amount'].required = False

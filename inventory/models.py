@@ -349,3 +349,45 @@ class ExpenseDetailOption(models.Model):
 
     def __str__(self):
         return self.name
+
+
+def stock_invoice_upload_path(instance, filename):
+    """Store invoices under media/stock_invoices/<year>/<month>/"""
+    from django.utils import timezone
+    now = timezone.now()
+    return f'stock_invoices/{now.year}/{now.month:02d}/{filename}'
+
+
+class StockInvoice(models.Model):
+    """Stock invoice documents uploaded by admin users."""
+    DOCUMENT_TYPE_CHOICES = [
+        ('invoice', 'Invoice'),
+        ('delivery_note', 'Delivery Note'),
+        ('purchase_order', 'Purchase Order'),
+        ('receipt', 'Receipt'),
+        ('other', 'Other'),
+    ]
+
+    title = models.CharField(max_length=255, help_text="Short description or invoice number")
+    document_type = models.CharField(max_length=30, choices=DOCUMENT_TYPE_CHOICES, default='invoice')
+    supplier = models.CharField(max_length=200, blank=True, help_text="Supplier / Manufacturer name")
+    invoice_date = models.DateField(default=timezone.now, help_text="Date on the invoice")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Total invoice amount (optional)")
+    document = models.FileField(upload_to=stock_invoice_upload_path, help_text="PDF, image, or other document file")
+    notes = models.TextField(blank=True)
+
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='stock_invoices')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-invoice_date', '-uploaded_at']
+        verbose_name = "Stock Invoice"
+        verbose_name_plural = "Stock Invoices"
+
+    def __str__(self):
+        return f"{self.title} ({self.invoice_date})"
+
+    def filename(self):
+        import os
+        return os.path.basename(self.document.name) if self.document else ''
