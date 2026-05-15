@@ -107,7 +107,7 @@ WSGI_APPLICATION = 'kulfi_config.wsgi.application'
 DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
     DATABASES = {
-        'default': dj_database_url.config(default=DATABASE_URL, conn_max_age=600, ssl_require=True)
+        'default': dj_database_url.config(default=DATABASE_URL, conn_max_age=600, ssl_require=DATABASE_URL.strip().lower().startswith(('postgres://', 'postgresql://')))
     }
 else:
     DATABASES = {
@@ -186,3 +186,5 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API endpoints for Indian Kulfi Mobile App (Android/iOS).',
     'VERSION': '1.0.0',
 }
+
+
