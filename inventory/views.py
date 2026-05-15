@@ -4855,7 +4855,7 @@ def print_income_statement_excel(request):
 # ==================== USER MANAGEMENT ====================
 
 @login_required
-@permission_required('auth.change_user', raise_exception=True)
+
 def user_list(request):
     """List all users"""
     users = User.objects.all()
@@ -4863,7 +4863,7 @@ def user_list(request):
     return render(request, 'inventory/user_list.html', context)
 
 @login_required
-@permission_required('auth.add_user', raise_exception=True)
+
 def add_user(request):
     """Add new user"""
     if request.method == 'POST':
@@ -4879,7 +4879,7 @@ def add_user(request):
     return render(request, 'inventory/user_form.html', context)
 
 @login_required
-@permission_required('auth.change_user', raise_exception=True)
+
 def edit_user(request, user_id):
     """Edit user"""
     user = get_object_or_404(User, pk=user_id)
@@ -4897,7 +4897,7 @@ def edit_user(request, user_id):
     return render(request, 'inventory/user_form.html', context)
 
 @login_required
-@permission_required('auth.delete_user', raise_exception=True)
+
 def delete_user(request, user_id):
     """Delete user"""
     user = get_object_or_404(User, pk=user_id)
