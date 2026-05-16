@@ -24,7 +24,10 @@ class Command(BaseCommand):
 
         source_db = Path(settings.BASE_DIR) / "db.sqlite3"
         if not source_db.exists():
-            raise CommandError(f"Source database not found: {source_db}")
+            self.stdout.write(
+                self.style.WARNING(f"Source SQLite database not found: {source_db}. Skipping import.")
+            )
+            return
 
         app_labels = []
         for app_config in apps.get_app_configs():
