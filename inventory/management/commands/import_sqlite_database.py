@@ -16,6 +16,14 @@ class Command(BaseCommand):
     help = "Import the committed SQLite database into the current database once."
 
     def handle(self, *args, **options):
+        # Skip import in production (PostgreSQL) environments
+        database_url = os.getenv('DATABASE_URL', '')
+        if 'postgres' in database_url.lower():
+            self.stdout.write(
+                self.style.WARNING("Skipping SQLite import: running in production environment (PostgreSQL detected).")
+            )
+            return
+
         if Product.objects.exists():
             self.stdout.write(
                 self.style.WARNING("Skipping SQLite import: data already exists in the target database.")
