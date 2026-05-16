@@ -1,0 +1,223 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}{{ title }} - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-plus"></i> {{ title }}</h1>
+
+<div class="row">
+    <div class="col-lg-8 offset-lg-2">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">{{ title }}</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {% csrf_token %}
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.name.id_for_label }}" class="form-label">
+                                Product Name <span class="text-danger">*</span>
+                            </label>
+                            {{ form.name }}
+                            {% if form.name.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.name.errors }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.sku.id_for_label }}" class="form-label">
+                                SKU (Stock Keeping Unit) <span class="text-danger">*</span>
+                            </label>
+                            {{ form.sku }}
+                            <small class="form-text text-muted">Auto-generated from category (e.g., IK001). You can still edit it.</small>
+                            {% if form.sku.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.sku.errors }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.category.id_for_label }}" class="form-label">
+                            Category <span class="text-danger">*</span>
+                        </label>
+                        {{ form.category }}
+                        {% if form.category.errors %}
+                        <div class="alert alert-danger mt-2">{{ form.category.errors }}</div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.cost_price.id_for_label }}" class="form-label">
+                                Cost Price (₹) <span class="text-danger">*</span>
+                            </label>
+                            {{ form.cost_price }}
+                            <small class="form-text text-muted">Price you pay to acquire the product</small>
+                            {% if form.cost_price.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.cost_price.errors }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.selling_price.id_for_label }}" class="form-label">
+                                Selling Price (₹) <span class="text-danger">*</span>
+                            </label>
+                            {{ form.selling_price }}
+                            <small class="form-text text-muted">Price you sell the product for</small>
+                            {% if form.selling_price.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.selling_price.errors }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.current_stock.id_for_label }}" class="form-label">
+                                Current Stock <span class="text-danger">*</span>
+                            </label>
+                            {{ form.current_stock }}
+                            <small class="form-text text-muted">How many units you currently have</small>
+                            {% if form.current_stock.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.current_stock.errors }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="{{ form.reorder_level.id_for_label }}" class="form-label">
+                                Reorder Level <span class="text-danger">*</span>
+                            </label>
+                            {{ form.reorder_level }}
+                            <small class="form-text text-muted">Minimum stock level before reorder alert</small>
+                            {% if form.reorder_level.errors %}
+                            <div class="alert alert-danger mt-2">{{ form.reorder_level.errors }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="{{ form.description.id_for_label }}" class="form-label">
+                            Description
+                        </label>
+                        {{ form.description }}
+                        <small class="form-text text-muted">Optional product description</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            {{ form.is_active }}
+                            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                Active Product
+                            </label>
+                            <small class="form-text text-muted d-block">Inactive products won't appear in sales entry</small>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-between">
+                        <a href="{% url 'inventory_list' %}" class="btn btn-secondary btn-lg d-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                            <i class="fas fa-times fa-lg"></i> Cancel
+                        </a>
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-home fa-lg"></i> Home
+                        </a>
+                        <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-save fa-lg"></i> Save Product
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Profit Margin Calculator -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-calculator"></i> Profit Calculator</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label">Cost Price: ₹<span id="calc-cost">0.00</span></label>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Selling Price: ₹<span id="calc-selling">0.00</span></label>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-6">
+                        <label class="form-label">Profit per Unit: ₹<span id="calc-profit">0.00</span></label>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Profit Margin: <span id="calc-margin">0%</span></label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function calculateProfit() {
+    const costPrice = parseFloat(document.getElementById('id_cost_price').value) || 0;
+    const sellingPrice = parseFloat(document.getElementById('id_selling_price').value) || 0;
+
+    const profit = sellingPrice - costPrice;
+    const margin = costPrice > 0 ? ((profit / costPrice) * 100) : 0;
+
+    document.getElementById('calc-cost').textContent = costPrice.toFixed(2);
+    document.getElementById('calc-selling').textContent = sellingPrice.toFixed(2);
+    document.getElementById('calc-profit').textContent = profit.toFixed(2);
+    document.getElementById('calc-margin').textContent = margin.toFixed(1) + '%';
+}
+
+async function fetchNextSkuForCategory(categoryName) {
+    if (!categoryName) {
+        return;
+    }
+
+    const skuInput = document.getElementById('id_sku');
+    try {
+        const response = await fetch("{% url 'get_next_sku' %}?category=" + encodeURIComponent(categoryName));
+        const data = await response.json();
+        if (data.success && data.sku) {
+            skuInput.value = data.sku;
+        }
+    } catch (error) {
+        console.error('Unable to auto-generate SKU', error);
+    }
+}
+
+const costInput = document.getElementById('id_cost_price');
+const sellingInput = document.getElementById('id_selling_price');
+const categoryInput = document.getElementById('id_category');
+const skuInput = document.getElementById('id_sku');
+const isEditMode = {% if product %}true{% else %}false{% endif %};
+
+let skuManuallyEdited = skuInput.value.trim() !== '';
+
+skuInput.addEventListener('input', function () {
+    skuManuallyEdited = skuInput.value.trim() !== '';
+});
+
+categoryInput.addEventListener('change', function () {
+    if (!isEditMode && !skuManuallyEdited) {
+        fetchNextSkuForCategory(categoryInput.value);
+    }
+});
+
+// Add event listeners to price inputs
+costInput.addEventListener('input', calculateProfit);
+sellingInput.addEventListener('input', calculateProfit);
+
+// Auto-fill SKU on add form initial load
+if (!isEditMode && !skuInput.value.trim()) {
+    fetchNextSkuForCategory(categoryInput.value);
+}
+
+// Calculate on page load
+calculateProfit();
+</script>
+{% endblock %}
+
+
+

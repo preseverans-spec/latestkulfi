@@ -1,0 +1,387 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Daily Sales Sheet - Kulfi{% endblock %}
+
+{% block content %}
+<style>
+/* Briefly highlight auto-copied sales counts for visual confirmation. */
+.quantity-input.prefilled-sales-count {
+    background-color: #fff3cd;
+    border-color: #ffca2c;
+    box-shadow: 0 0 0 0.2rem rgba(255, 202, 44, 0.2);
+    transition: background-color 1.2s ease, box-shadow 1.2s ease, border-color 1.2s ease;
+}
+
+.quantity-input.prefilled-sales-count.fade-out {
+    background-color: #ffffff;
+    border-color: #ced4da;
+    box-shadow: none;
+}
+
+/* Flag stock taken values above combined stock for quick correction. */
+.stock-taken-input.over-combined-stock {
+    background-color: #f8d7da;
+    border-color: #dc3545;
+    color: #842029;
+}
+
+.daily-sales-summary-card {
+    border: 0;
+    color: #ffffff;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.daily-sales-summary-card strong,
+.daily-sales-summary-card span {
+    color: #ffffff;
+}
+
+.daily-sales-summary-card.summary-stock-taken {
+    background: #334155;
+}
+
+.daily-sales-summary-card.summary-items-sold {
+    background: #1e3a8a;
+}
+
+.daily-sales-summary-card.summary-sales-count {
+    background: #166534;
+}
+
+.daily-sales-summary-card.summary-balance-count {
+    background: #312e81;
+}
+
+.daily-sales-summary-card.summary-selling-price {
+    background: #92400e;
+}
+
+</style>
+
+<h1 class="page-title"><i class="fas fa-bolt"></i> Daily Sales Sheet</h1>
+
+<form method="POST" id="quick-sales-form">
+    {% csrf_token %}
+
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label for="sales_date" class="form-label">Sales Date</label>
+            <input type="date" id="sales_date" name="sales_date" class="form-control" value="{{ selected_sales_date|date:'Y-m-d' }}" required>
+            <small class="text-muted">Combined stock shows live current stock.</small>
+        </div>
+        <div class="col-md-8 d-flex align-items-end justify-content-end">
+            <a href="{% if user.is_staff %}{% url 'dashboard' %}{% else %}{% url 'quick_sales_entry' %}{% endif %}" class="btn btn-outline-secondary btn-lg me-2"
+               onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                <i class="fas fa-arrow-left"></i> Cancel
+            </a>
+            {% if not user.is_staff %}
+            <button type="submit" name="action" value="save_stock_taken" class="btn btn-outline-primary btn-lg me-2">
+                <i class="fas fa-clipboard-check"></i> Save Stock Taken
+            </button>
+            <button type="submit" name="action" value="save_sales_count" class="btn btn-outline-success btn-lg me-2">
+                <i class="fas fa-save"></i> Save Sales Count
+            </button>
+            {% endif %}
+            <button type="submit" name="action" value="record_sales" class="btn btn-primary btn-lg">
+                <i class="fas fa-save"></i> Record Sales
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Products List</h5>
+            {% if user.is_staff %}
+            <small class="text-muted">Enter Sales Count to deduct actual sold stock from inventory.</small>
+            {% else %}
+            <small class="text-muted">Enter Stock Taken Count for your daily record (no inventory deduction), then enter Sales Count to deduct actual sold stock. If Sales Count is left empty and you click Record Sales, saved Stock Taken counts will be treated as sold.</small>
+            {% endif %}
+        </div>
+        <div class="card-body">
+            {% if not user.is_staff %}
+            <div class="alert alert-secondary py-2 mb-2">
+                <strong>Current Stock Taken for Date:</strong> <span id="summary-stock-taken">{{ total_stock_taken_for_date }}</span>
+            </div>
+            <div class="alert alert-success py-2 mb-2">
+                <strong>Total Combined Stock (Live):</strong> <span id="summary-total-combined">{{ total_combined_stock }}</span>
+            </div>
+            {% endif %}
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Product Name</th>
+                            {% if user.is_staff %}
+                            <th>Avg Unit Price</th>
+                            {% endif %}
+                            <th>Combined Stock</th>
+                            {% if not user.is_staff %}
+                            <th>Stock Taken Count</th>
+                            {% endif %}
+                            <th>Sales Count</th>
+                            {% if not user.is_staff %}
+                            <th>Balance Count</th>
+                            {% endif %}
+                            <th>Estimated Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>
+                                {{ product.name }}
+                                <input type="hidden" name="product_key[]" value="{{ product.key }}">
+                                <input type="hidden" name="product_label[]" value="{{ product.name }}">
+                                {% if not user.is_staff %}
+                                <input type="hidden" class="unit-price-value" value="{{ product.avg_price }}">
+                                {% endif %}
+                            </td>
+                            {% if user.is_staff %}
+                            <td>
+                                <span class="unit-price">₹{{ product.avg_price|floatformat:2 }}</span>
+                                <input type="hidden" class="unit-price-value" value="{{ product.avg_price }}">
+                            </td>
+                            {% endif %}
+                            <td>{{ product.stock }}</td>
+                            {% if not user.is_staff %}
+                            <td>
+                                <input type="number" name="stock_taken_count[]" min="0" value="{{ product.stock_taken_count }}" class="form-control stock-taken-input zero-clear-input" data-stock="{{ product.stock }}" style="max-width: 120px;">
+                            </td>
+                            {% endif %}
+                            <td>
+                                <input type="number" name="quantity[]" min="0" value="{{ product.prefill_quantity|default:0 }}" class="form-control quantity-input zero-clear-input" data-stock="{{ product.stock }}" style="max-width: 120px;">
+                            </td>
+                            {% if not user.is_staff %}
+                            <td>
+                                <span class="balance-count">0</span>
+                            </td>
+                            {% endif %}
+                            <td>
+                                <span class="total-price">₹0.00</span>
+                            </td>
+                            <input type="hidden" name="sale_date[]" class="sale-date-value" value="{{ today }}">
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3">
+                <div class="row g-2">
+                    {% if not user.is_staff %}
+                    <div class="col-md-6 col-lg-2">
+                        <div class="alert daily-sales-summary-card summary-stock-taken py-2 mb-0">
+                            <strong>Total Stock Taken:</strong> <span id="summary-total-stock-taken">{{ total_stock_taken_for_date }}</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-2">
+                        <div class="alert daily-sales-summary-card summary-items-sold py-2 mb-0">
+                            <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-2">
+                        <div class="alert daily-sales-summary-card summary-sales-count py-2 mb-0">
+                            <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="alert daily-sales-summary-card summary-balance-count py-2 mb-0">
+                            <strong>Total Balance Count:</strong> <span id="summary-balance-count">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-12 col-lg-3">
+                        <div class="alert daily-sales-summary-card summary-selling-price py-2 mb-0">
+                            <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="col-md-4">
+                        <div class="alert daily-sales-summary-card summary-items-sold py-2 mb-0">
+                            <strong>Total Items Sold:</strong> <span id="summary-total-items">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert daily-sales-summary-card summary-sales-count py-2 mb-0">
+                            <strong>Total Sales Count:</strong> <span id="summary-sales-count">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert daily-sales-summary-card summary-selling-price py-2 mb-0">
+                            <strong>Total Selling Price:</strong> ₹<span id="summary-total-price">0.00</span>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+        </div>
+    </div>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const isPrefillFromStockTaken = "{{ prefill_from_stock_taken|yesno:'true,false' }}" === "true";
+    const salesDateInput = document.getElementById('sales_date');
+    const selectedDate = salesDateInput.value;
+
+    function shouldClearZero(value) {
+        const normalized = (value || '').trim();
+        return normalized === '0' || normalized === '0.0' || normalized === '0.00';
+    }
+
+    document.querySelectorAll('.zero-clear-input').forEach(function(input) {
+        input.addEventListener('focus', function() {
+            if (shouldClearZero(input.value)) {
+                input.value = '';
+            }
+        });
+
+        input.addEventListener('blur', function() {
+            if ((input.value || '').trim() === '') {
+                input.value = '0';
+            }
+        });
+    });
+
+    // sync each row sale date input when main date changed
+    salesDateInput.addEventListener('change', function() {
+        const dateValue = this.value;
+        document.querySelectorAll('.sale-date-value').forEach(function(input) {
+            input.value = dateValue;
+        });
+
+        // Reload page with selected date so combined stock is recalculated as-of that date.
+        const url = new URL(window.location.href);
+        url.searchParams.set('sales_date', dateValue);
+        window.location.href = url.toString();
+    });
+
+    // initial setting for all row sale dates and total values
+    document.querySelectorAll('.sale-date-value').forEach(function(input) {
+        input.value = selectedDate;
+    });
+
+    document.querySelectorAll('.quantity-input').forEach(function(quantityInput) {
+        const row = quantityInput.closest('tr');
+        const unitPrice = parseFloat(row.querySelector('.unit-price-value').value || 0);
+        const totalPriceLabel = row.querySelector('.total-price');
+
+        if (isPrefillFromStockTaken && (parseInt(quantityInput.value, 10) || 0) > 0) {
+            quantityInput.classList.add('prefilled-sales-count');
+            window.setTimeout(function() {
+                quantityInput.classList.add('fade-out');
+            }, 1400);
+        }
+
+        function updateTotal() {
+            const qty = parseFloat(quantityInput.value) || 0;
+            const stock = Math.max(0, parseFloat(quantityInput.dataset.stock || 0));
+            if (qty < 0) {
+                quantityInput.value = 0;
+                return;
+            }
+            if (qty > stock) {
+                quantityInput.value = stock;
+            }
+            const total = (unitPrice * parseFloat(quantityInput.value)).toFixed(2);
+            totalPriceLabel.textContent = '₹' + total;
+            updateSummary();
+        }
+
+        quantityInput.addEventListener('blur', function() {
+            if (quantityInput.value === '') {
+                quantityInput.value = '0';
+            }
+            updateTotal();
+        });
+
+        quantityInput.addEventListener('input', updateTotal);
+        updateTotal();
+    });
+
+    document.querySelectorAll('.stock-taken-input').forEach(function(stockTakenInput) {
+        function normalizeStockTaken() {
+            const val = parseInt(stockTakenInput.value, 10);
+            if (isNaN(val) || val < 0) {
+                stockTakenInput.value = 0;
+            }
+
+            const currentValue = parseInt(stockTakenInput.value, 10) || 0;
+            const combinedStock = Math.max(0, parseInt(stockTakenInput.dataset.stock || '0', 10) || 0);
+            if (currentValue > combinedStock) {
+                stockTakenInput.classList.add('over-combined-stock');
+            } else {
+                stockTakenInput.classList.remove('over-combined-stock');
+            }
+
+            updateSummary();
+        }
+
+        stockTakenInput.addEventListener('blur', function() {
+            if (stockTakenInput.value === '') {
+                stockTakenInput.value = '0';
+            }
+            normalizeStockTaken();
+        });
+
+        stockTakenInput.addEventListener('input', normalizeStockTaken);
+        normalizeStockTaken();
+    });
+
+    function updateSummary() {
+        let totalItems = 0;
+        let totalPrice = 0;
+        let salesCount = 0;
+        let totalStockTaken = 0;
+        let totalBalanceCount = 0;
+
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            const quantity = parseInt(row.querySelector('.quantity-input').value, 10) || 0;
+            const stockTakenInput = row.querySelector('.stock-taken-input');
+            const stockTaken = stockTakenInput ? (parseInt(stockTakenInput.value, 10) || 0) : 0;
+            const balanceCount = stockTaken - quantity;
+            const balanceLabel = row.querySelector('.balance-count');
+            if (balanceLabel) {
+                balanceLabel.textContent = balanceCount;
+                balanceLabel.classList.toggle('text-danger', balanceCount < 0);
+            }
+            const rowPrice = parseFloat(row.querySelector('.total-price').textContent.replace('₹', '')) || 0;
+
+            totalStockTaken += stockTaken;
+            totalBalanceCount += balanceCount;
+
+            if (quantity > 0) {
+                salesCount += 1;
+                totalItems += quantity;
+                totalPrice += rowPrice;
+            }
+        });
+
+        const summaryStockTaken = document.getElementById('summary-stock-taken');
+        const summaryTotalStockTaken = document.getElementById('summary-total-stock-taken');
+        if (summaryStockTaken) {
+            summaryStockTaken.textContent = totalStockTaken;
+        }
+        if (summaryTotalStockTaken) {
+            summaryTotalStockTaken.textContent = totalStockTaken;
+        }
+        const summaryBalanceCount = document.getElementById('summary-balance-count');
+        if (summaryBalanceCount) {
+            summaryBalanceCount.textContent = totalBalanceCount;
+            summaryBalanceCount.classList.toggle('text-danger', totalBalanceCount < 0);
+        }
+        document.getElementById('summary-total-items').textContent = totalItems;
+        document.getElementById('summary-sales-count').textContent = salesCount;
+        document.getElementById('summary-total-price').textContent = totalPrice.toFixed(2);
+    }
+
+    // ensure all row sale_date values are set when page loads
+    salesDateInput.value = selectedDate;
+    updateSummary();
+});
+</script>
+
+{% endblock %}
+
+
+

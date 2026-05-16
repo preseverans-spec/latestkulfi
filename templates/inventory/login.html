@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indian Kulfi Inventory - Login</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            min-height: 100vh;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* ── LEFT SIDE ── */
+        .left-panel {
+            width: 45%;
+            background: #0A0A0A;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 60px 48px;
+            overflow: hidden;
+        }
+
+        /* Decorative blobs */
+        .left-panel::before {
+            content: '';
+            position: absolute;
+            top: -120px; left: -120px;
+            width: 400px; height: 400px;
+            background: radial-gradient(circle, rgba(230,57,70,0.12) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: pulse 6s ease-in-out infinite;
+        }
+
+        .left-panel::after {
+            content: '';
+            position: absolute;
+            bottom: -100px; right: -100px;
+            width: 360px; height: 360px;
+            background: radial-gradient(circle, rgba(42,157,143,0.08) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: pulse 8s ease-in-out infinite reverse;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.12); opacity: 0.7; }
+        }
+
+        .left-content { position: relative; z-index: 1; text-align: center; }
+
+        .left-logo {
+            width: 160px; height: 160px;
+            object-fit: contain;
+            margin-bottom: 32px;
+            filter: drop-shadow(0 4px 24px rgba(230,57,70,0.35));
+        }
+
+        .left-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.6rem;
+            font-weight: 800;
+            color: #FFFFFF;
+            line-height: 1.2;
+            margin-bottom: 16px;
+        }
+
+        .left-title span { color: #E63946; }
+
+        .left-subtitle {
+            font-size: 1rem;
+            color: #888888;
+            line-height: 1.7;
+            max-width: 320px;
+        }
+
+        .left-divider {
+            width: 48px; height: 3px;
+            background: linear-gradient(90deg, #E63946, #2A9D8F);
+            border-radius: 2px;
+            margin: 24px auto;
+        }
+
+        .left-features {
+            list-style: none;
+            margin-top: 8px;
+            text-align: left;
+        }
+
+        .left-features li {
+            color: #888888;
+            font-size: 0.9rem;
+            padding: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .left-features li i { color: #2A9D8F; font-size: 0.85rem; }
+
+        /* ── RIGHT SIDE ── */
+        .right-panel {
+            width: 55%;
+            background: #FFF8F0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 60px 48px;
+            overflow-y: auto;
+        }
+
+        .login-box {
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .login-heading {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.9rem;
+            font-weight: 700;
+            color: #1D1D1D;
+            margin-bottom: 6px;
+        }
+
+        .login-subtext {
+            color: #5A5A5A;
+            font-size: 0.95rem;
+            margin-bottom: 36px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #5A5A5A;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .input-premium {
+            width: 100%;
+            padding: 13px 16px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.97rem;
+            color: #1D1D1D;
+            background: #FFFFFF;
+            border: 1.5px solid #F0E5D8;
+            border-radius: 10px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .input-premium::placeholder { color: #BBBBBB; }
+
+        .input-premium:focus {
+            border-color: #E63946;
+            box-shadow: 0 0 0 3px rgba(230,57,70,0.12);
+        }
+
+        .btn-primary-login {
+            width: 100%;
+            padding: 14px;
+            background: #E63946;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+        }
+
+        .btn-primary-login:hover {
+            background: #C92F3A;
+            box-shadow: 0 6px 24px rgba(230,57,70,0.30);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary-login:active { transform: translateY(0); }
+
+        .alert-error {
+            background: #FFF5F5;
+            border-left: 4px solid #E63946;
+            color: #C92F3A;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 0.92rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .login-footer {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 0.88rem;
+            color: #888888;
+        }
+
+        .login-footer a {
+            color: #E63946;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .login-footer a:hover { color: #C92F3A; text-decoration: underline; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .left-panel { width: 100%; padding: 40px 24px; min-height: 220px; }
+            .left-title { font-size: 1.8rem; }
+            .left-features { display: none; }
+            .right-panel { width: 100%; padding: 40px 24px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- LEFT BRANDING PANEL -->
+    <div class="left-panel">
+        <div class="left-content">
+            <img src="{{ STATIC_URL }}logo/logo.svg" alt="Indian Kulfi Logo" class="left-logo"
+                 onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';">
+            <h1 class="left-title">Welcome to <span>Indian Kulfi</span><br>Inventory Management System</h1>
+            <div class="left-divider"></div>
+            <p class="left-subtitle">Complete inventory & sales management for your kulfi business.</p>
+            <ul class="left-features">
+                <li><i class="fas fa-check-circle"></i> Real-time stock tracking</li>
+                <li><i class="fas fa-check-circle"></i> Daily sales reporting</li>
+                <li><i class="fas fa-check-circle"></i> Operations & expense management</li>
+                <li><i class="fas fa-check-circle"></i> Multi-user access control</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- RIGHT AUTH PANEL -->
+    <div class="right-panel">
+        <div class="login-box">
+            <h2 class="login-heading">Welcome User</h2>
+            <p class="login-subtext">Sign in to access your dashboard</p>
+
+            {% if messages %}
+                {% for message in messages %}
+                <div class="alert-error">
+                    <i class="fas fa-exclamation-circle"></i> {{ message }}
+                </div>
+                {% endfor %}
+            {% endif %}
+
+            <form method="POST" action="{% url 'login' %}">
+                {% csrf_token %}
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" class="input-premium"
+                           placeholder="Enter your username" required autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" class="input-premium"
+                           placeholder="Enter your password" required>
+                </div>
+
+                <button type="submit" class="btn-primary-login">
+                    <i class="fas fa-sign-in-alt"></i>&nbsp; Sign In
+                </button>
+            </form>
+
+            <div class="login-footer">
+                <a href="#" id="forgot-password-link">Forgot Password?</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var forgotLink = document.getElementById('forgot-password-link');
+            if (forgotLink) {
+                forgotLink.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    fetch('{% url "send_forgot_password_email" %}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+                        body: JSON.stringify({})
+                    })
+                    .then(r => r.json())
+                    .then(data => alert(data.message || 'Password reset request sent. The admin will contact you.'))
+                    .catch(() => alert('Failed to send password reset request.'));
+                });
+            }
+        });
+    </script>
+</body>
+</html>

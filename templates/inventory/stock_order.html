@@ -1,0 +1,646 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}New Stock Order - Kulfi{% endblock %}
+
+{% block extra_css %}
+<!-- SheetJS for Excel export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- html2canvas for Image export -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+    /* ── Screen styles ── */
+    .order-table {
+        border-collapse: collapse;
+        width: auto;
+        background: #fff;
+    }
+    .order-table th,
+    .order-table td {
+        border: 1px solid #ccc;
+        padding: 5px 10px;
+        text-align: center;
+        font-size: 0.9rem;
+        background: #fff;
+        color: #000;
+        white-space: nowrap;
+    }
+    .order-table thead th {
+        background: #f0f0f0;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+    .order-table tfoot td {
+        background: #e8e8e8;
+        font-weight: 700;
+    }
+    .order-table td.name-col {
+        text-align: center;
+    }
+    .order-table input[type="number"] {
+        width: 70px;
+        border: 1px solid #bbb;
+        background: #fafafa;
+        text-align: center;
+        padding: 3px 4px;
+        border-radius: 3px;
+        font-size: 0.9rem;
+    }
+    .order-table input[type="number"]:focus {
+        outline: 2px solid #AE6F1D;
+        background: #fff;
+    }
+    .order-table .total-col {
+        min-width: 80px;
+    }
+    .order-table .cost-col {
+        min-width: 70px;
+    }
+    .no-manufacturer-msg {
+        text-align: center;
+        color: #888;
+        padding: 40px 0;
+        font-size: 1.1rem;
+    }
+    .action-bar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+    .action-bar .btn-icon {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9rem;
+    }
+    .order-wrapper {
+        overflow-x: auto;
+    }
+    .order-date-info {
+        font-size: 0.95rem;
+        color: #572809;
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    /* ── Print styles (browser print / save-as-PDF) ── */
+    @media print {
+        body {
+            background: white !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        .navbar, .sidebar, .action-bar, .form-row,
+        .page-title, .no-manufacturer-msg, .no-print { display: none !important; }
+        .main-content { padding: 0 !important; }
+        .print-header { display: block !important; }
+    }
+
+    /* ── Clean print-preview table (shown in popup window) ── */
+    .pt-table {
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: auto;
+    }
+    .pt-table th, .pt-table td {
+        border: 1px solid #333;
+        padding: 5px 10px;
+        text-align: center;
+        font-size: 10pt;
+        white-space: nowrap;
+    }
+    .pt-table thead th { background: #e0e0e0; font-weight: 700; }
+    .pt-table tfoot td { background: #d0d0d0; font-weight: 700; }
+
+    .print-header { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title no-print"><i class="fas fa-clipboard-list"></i> New Stock Order</h1>
+
+<!-- Controls -->
+<div class="form-row mb-3 no-print">
+    <div class="row g-3 align-items-end">
+        <div class="col-auto">
+            <label class="form-label mb-1" for="orderDate">Order Date</label>
+            <input type="date" id="orderDate" class="form-control" value="{{ today }}">
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-1" for="manufacturerSelect">Manufacturer</label>
+            <select id="manufacturerSelect" class="form-select" style="min-width:200px;">
+                <option value="">-- Select Manufacturer --</option>
+                <option value="indian_kulfi">Indian Kulfi</option>
+                <option value="kulfi_corner">Kulfi Corner</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- Action Bar -->
+<div class="action-bar no-print" id="actionBar" style="display:none!important;">
+    <!-- Print dropdown -->
+    <div class="btn-group">
+        <button type="button" class="btn btn-outline-primary btn-icon dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="fas fa-print"></i> Print / Export
+        </button>
+        <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="exportPDF(); return false;">
+                <i class="fas fa-file-pdf"></i> Download PDF
+            </a></li>
+            <!-- jsPDF for PDF export -->
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+            <script>
+            function exportPDF() {
+                const d = getOrderData();
+                // Build an off-screen div with the clean table
+                const container = document.createElement('div');
+                container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
+
+                let rows = '';
+                d.rows.forEach(function(r) {
+                    rows += '<tr>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
+                        '</tr>';
+                });
+
+                container.innerHTML =
+                    '<div style="text-align:center;margin-bottom:10px;">'
+                    + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
+                    + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + '</div>'
+                    + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
+                    + '<thead><tr>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">S.No.</th>'
+                    + '<th style="border:1px solid #333;padding:5px 12px;background:#e0e0e0;font-weight:700;">Kulfi Name</th>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.lotLabel + '</th>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">Quantity</th>'
+                    + '</tr></thead>'
+                    + '<tbody>' + rows + '</tbody>'
+                    + '<tfoot><tr>'
+                    + '<td colspan="2" style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">Total</td>'
+                    + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalLot + '</td>'
+                    + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalQty + '</td>'
+                    + '</tr></tfoot>'
+                    + '</table>';
+
+                document.body.appendChild(container);
+                html2canvas(container, { backgroundColor: '#ffffff', scale: 2 }).then(function(canvas) {
+                    document.body.removeChild(container);
+                    const imgData = canvas.toDataURL('image/png');
+                    const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+                    const pageWidth = pdf.internal.pageSize.getWidth();
+                    const pageHeight = pdf.internal.pageSize.getHeight();
+                    // Calculate image dimensions to fit A4
+                    const imgWidth = pageWidth - 40;
+                    const imgHeight = canvas.height * imgWidth / canvas.width;
+                    let y = 20;
+                    pdf.addImage(imgData, 'PNG', 20, y, imgWidth, imgHeight);
+                    pdf.save('StockOrder_' + d.date + '.pdf');
+                });
+            }
+            </script>
+            <script>
+            function saveAndPrintOrder() {
+                const d = getOrderData();
+                fetch("{% url 'save_stock_order' %}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({
+                        manufacturer: d.mfgLabel,
+                        order_date: d.date,
+                        items: d.rows
+                    })
+                }).then(resp => resp.json()).then(data => {
+                    openPrintWindow();
+                });
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+            </script>
+            <li><a class="dropdown-item" href="#" onclick="exportExcel(); return false;">
+                <i class="fas fa-file-excel"></i> Download Excel
+            </a></li>
+            <li><a class="dropdown-item" href="#" onclick="exportImage(); return false;">
+                <i class="fas fa-image"></i> Download Image (PNG)
+            </a></li>
+        </ul>
+    </div>
+    <button class="btn btn-outline-warning btn-icon" onclick="clearInputs()" title="Clear entries">
+        <i class="fas fa-eraser"></i> Clear
+    </button>
+    <button class="btn btn-outline-secondary btn-icon" onclick="resetForm()" title="Reset form">
+        <i class="fas fa-undo"></i> Reset
+    </button>
+</div>
+
+
+<!-- Order Table -->
+<div class="order-wrapper">
+    <div id="noManufacturerMsg" class="no-manufacturer-msg">
+        <i class="fas fa-hand-point-up fa-2x mb-3 d-block"></i>
+        Please select a manufacturer above to view the order form.
+    </div>
+
+    <!-- Indian Kulfi Table -->
+    <table class="order-table" id="indianKulfiTable" style="display:none;">
+        <thead>
+            <tr>
+                <th style="width:45px;">S.No.</th>
+                <th>Kulfi Name</th>
+                <th class="cost-col">Cost/Piece</th>
+                <th style="width:90px;">Lot</th>
+                <th style="width:90px;">Quantity</th>
+                <th class="row-total-col total-col">Total</th>
+            </tr>
+        </thead>
+        <tbody id="indianKulfiBody"></tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2" style="font-weight:700;">Total</td>
+                <td class="cost-col"></td>
+                <td id="ikTotalLot" style="font-weight:700;">0</td>
+                <td id="ikTotalQty" style="font-weight:700;">0</td>
+                <td class="row-total-col" id="ikTotalAmt" style="font-weight:700;">₹0.00</td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <!-- Kulfi Corner Table -->
+    <table class="order-table" id="kulfiCornerTable" style="display:none;">
+        <thead>
+            <tr>
+                <th style="width:45px;">S.No.</th>
+                <th>Kulfi Name</th>
+                <th class="cost-col">Cost/Piece</th>
+                <th colspan="2">ORDER</th>
+                <th class="row-total-col total-col">TOTAL</th>
+            </tr>
+            <tr>
+                <th></th>
+                <th></th>
+                <th class="cost-col"></th>
+                <th style="width:90px;">Pack</th>
+                <th style="width:90px;">Quantity</th>
+                <th class="row-total-col"></th>
+            </tr>
+        </thead>
+        <tbody id="kulfiCornerBody"></tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2" style="font-weight:700;">Total</td>
+                <td class="cost-col"></td>
+                <td id="kcTotalPack" style="font-weight:700;">0</td>
+                <td id="kcTotalQty" style="font-weight:700;">0</td>
+                <td class="row-total-col" id="kcTotalAmt" style="font-weight:700;">₹0.00</td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<!-- Stock Order History Section -->
+<div class="card mt-4">
+    <div class="card-header bg-secondary text-white">
+        <h5 class="mb-0"><i class="fas fa-history"></i> Stock Order History</h5>
+    </div>
+    <div class="card-body">
+        <!-- Placeholder for previous order details. Replace with dynamic content as needed. -->
+        <p class="text-muted">Previous stock order details will appear here.</p>
+    </div>
+</div>
+
+<script>
+    const indianKulfiProducts = [
+        { name: 'Malai',          cost: 24.17 },
+        { name: 'Kesar Badam',    cost: 24.17 },
+        { name: 'Kesar Pista',    cost: 24.17 },
+        { name: 'Pista Badam',    cost: 26.67 },
+        { name: 'Chocolate',      cost: 26.67 },
+        { name: 'Strawberry',     cost: 24.17 },
+        { name: 'Mango Malai',    cost: 24.17 },
+        { name: 'Dry Fruit',      cost: 26.67 },
+        { name: 'Butterscotch',   cost: 26.67 },
+        { name: 'Rose',           cost: 26.67 },
+        { name: 'Blackcurrent',   cost: 26.67 },
+        { name: 'Caramel Coffee', cost: 26.67 },
+        { name: 'Coconut',        cost: 24.17 },
+        { name: 'Elaichi',        cost: 24.17 },
+        { name: 'Litchi',         cost: 24.17 },
+        { name: 'Kesar Kajoor',   cost: 24.17 },
+        { name: 'Guava',          cost: 26.67 },
+        { name: 'Paan',           cost: 26.67 },
+    ];
+
+    const kulfiCornerProducts = [
+        { name: 'Malai',          cost: 28.00 },
+        { name: 'Kesar Badam',    cost: 28.00 },
+        { name: 'Kesar Pista',    cost: 28.00 },
+        { name: 'Pista Badam',    cost: 28.00 },
+        { name: 'Chocolate',      cost: 28.00 },
+        { name: 'Strawberry',     cost: 26.00 },
+        { name: 'Mango Malai',    cost: 26.00 },
+        { name: 'Dry Fruit',      cost: 28.00 },
+        { name: 'Butterscotch',   cost: 28.00 },
+        { name: 'Rose',           cost: 28.00 },
+        { name: 'Blackcurrent',   cost: 28.00 },
+        { name: 'Caramel Coffee', cost: 28.00 },
+        { name: 'Coconut',        cost: 26.00 },
+        { name: 'Elaichi',        cost: 26.00 },
+        { name: 'Litchi',         cost: 26.00 },
+        { name: 'Kesar Kajoor',   cost: 26.00 },
+        { name: 'Guava',          cost: 28.00 },
+        { name: 'Paan',           cost: 28.00 },
+    ];
+
+    function buildTableBody(products, bodyId, inputPrefix) {
+        const tbody = document.getElementById(bodyId);
+        tbody.innerHTML = '';
+        products.forEach(function(p, i) {
+            const sno = i + 1;
+            const row = document.createElement('tr');
+            row.innerHTML =
+                '<td>' + sno + '</td>' +
+                '<td class="name-col">' + p.name + '</td>' +
+                '<td class="cost-col">₹' + p.cost.toFixed(2) + '</td>' +
+                '<td>' +
+                  '<input type="number" min="0" step="1" id="' + inputPrefix + '_lot_' + i + '" ' +
+                  'data-index="' + i + '" data-prefix="' + inputPrefix + '" data-cost="' + p.cost + '" ' +
+                  'class="lot-input" placeholder="0" value="">' +
+                '</td>' +
+                '<td id="' + inputPrefix + '_qty_' + i + '"></td>' +
+                '<td class="row-total-col" id="' + inputPrefix + '_total_' + i + '"></td>';
+            tbody.appendChild(row);
+        });
+
+        // Attach event listeners
+        const inputs = tbody.querySelectorAll('.lot-input');
+        inputs.forEach(function(input) {
+            input.addEventListener('focus', function() {
+                if (input.value === '0') input.value = '';
+            });
+            input.addEventListener('input', function() {
+                recalcRow(input);
+                recalcFooter(inputPrefix);
+            });
+        });
+    }
+
+    function recalcRow(input) {
+        const i = input.dataset.index;
+        const prefix = input.dataset.prefix;
+        const cost = parseFloat(input.dataset.cost);
+        const raw = input.value.trim();
+        const lotVal = raw === '' ? 0 : (parseInt(raw) || 0);
+        const qty = lotVal * 6;
+        const total = qty * cost;
+        const qtyEl = document.getElementById(prefix + '_qty_' + i);
+        const totEl = document.getElementById(prefix + '_total_' + i);
+        qtyEl.textContent  = (raw === '' || lotVal === 0) ? '' : qty;
+        totEl.textContent  = (raw === '' || lotVal === 0) ? '' : '₹' + total.toFixed(2);
+    }
+
+    function recalcFooter(prefix) {
+        const inputs = document.querySelectorAll('input[data-prefix="' + prefix + '"]');
+        let totalLot = 0, totalQty = 0, totalAmt = 0;
+        inputs.forEach(function(input) {
+            const i = input.dataset.index;
+            const cost = parseFloat(input.dataset.cost);
+            const lotVal = parseInt(input.value) || 0;
+            const qty = lotVal * 6;
+            totalLot += lotVal;
+            totalQty += qty;
+            totalAmt += qty * cost;
+        });
+
+        if (prefix === 'ik') {
+            document.getElementById('ikTotalLot').textContent = totalLot;
+            document.getElementById('ikTotalQty').textContent = totalQty;
+            document.getElementById('ikTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
+        } else {
+            document.getElementById('kcTotalPack').textContent = totalLot;
+            document.getElementById('kcTotalQty').textContent = totalQty;
+            document.getElementById('kcTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
+        }
+    }
+
+    function showManufacturer(val) {
+        const ikTable = document.getElementById('indianKulfiTable');
+        const kcTable = document.getElementById('kulfiCornerTable');
+        const noMsg  = document.getElementById('noManufacturerMsg');
+        const actionBar = document.getElementById('actionBar');
+
+        if (val === 'indian_kulfi') {
+            noMsg.style.display = 'none';
+            ikTable.style.display = 'table';
+            kcTable.style.display = 'none';
+            actionBar.style.cssText = 'display:flex!important;';
+            buildTableBody(indianKulfiProducts, 'indianKulfiBody', 'ik');
+        } else if (val === 'kulfi_corner') {
+            noMsg.style.display = 'none';
+            ikTable.style.display = 'none';
+            kcTable.style.display = 'table';
+            actionBar.style.cssText = 'display:flex!important;';
+            buildTableBody(kulfiCornerProducts, 'kulfiCornerBody', 'kc');
+        } else {
+            noMsg.style.display = 'block';
+            ikTable.style.display = 'none';
+            kcTable.style.display = 'none';
+            actionBar.style.cssText = 'display:none!important;';
+        }
+    }
+
+    document.getElementById('manufacturerSelect').addEventListener('change', function() {
+        showManufacturer(this.value);
+    });
+
+    function clearInputs() {
+        const val = document.getElementById('manufacturerSelect').value;
+        const prefix = val === 'indian_kulfi' ? 'ik' : 'kc';
+        const inputs = document.querySelectorAll('input[data-prefix="' + prefix + '"]');
+        inputs.forEach(function(input) {
+            input.value = '0';
+            recalcRow(input);
+        });
+        recalcFooter(prefix);
+    }
+
+    function resetForm() {
+        document.getElementById('manufacturerSelect').value = '';
+        document.getElementById('orderDate').value = '{{ today }}';
+        showManufacturer('');
+    }
+
+    /* ── Collect current order rows as plain data ── */
+    function getOrderData() {
+        const manufacturer = document.getElementById('manufacturerSelect').value;
+        const prefix = manufacturer === 'indian_kulfi' ? 'ik' : 'kc';
+        const lotLabel = manufacturer === 'indian_kulfi' ? 'Lot' : 'Pack';
+        const mfgLabel = manufacturer === 'indian_kulfi' ? 'Indian Kulfi' : 'Kulfi Corner';
+        const date     = document.getElementById('orderDate').value;
+        const products = manufacturer === 'indian_kulfi' ? indianKulfiProducts : kulfiCornerProducts;
+
+        const rows = [];
+        products.forEach(function(p, i) {
+            const input  = document.getElementById(prefix + '_lot_' + i);
+            const lotVal = parseInt(input ? input.value : '') || 0;
+            const qty    = lotVal * 6;
+            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '' });
+        });
+
+        // Footer totals
+        const totalLotEl = prefix === 'ik'
+            ? document.getElementById('ikTotalLot')
+            : document.getElementById('kcTotalPack');
+        const totalQtyEl = prefix === 'ik'
+            ? document.getElementById('ikTotalQty')
+            : document.getElementById('kcTotalQty');
+
+        return {
+            mfgLabel, lotLabel, date, rows,
+            totalLot: totalLotEl ? totalLotEl.textContent : '0',
+            totalQty: totalQtyEl ? totalQtyEl.textContent : '0',
+        };
+    }
+
+    /* ── Print / Save as PDF in a clean popup ── */
+    function openPrintWindow() {
+        const d = getOrderData();
+        let rows = '';
+        d.rows.forEach(function(r) {
+            // Only include products with non-empty and non-zero quantity
+            if (r.qty !== '' && r.qty !== 0 && r.lot !== '' && r.lot !== 0) {
+                rows += '<tr>' +
+                    '<td>' + r.sno + '</td>' +
+                    '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
+                    '<td>' + r.lot + '</td>' +
+                    '<td>' + r.qty + '</td>' +
+                    '</tr>';
+            }
+        });
+        const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            + '<title>Stock Order</title>'
+            + '<style>'
+            + 'body{font-family:Arial,sans-serif;margin:20px;}'
+            + '.hdr{text-align:center;margin-bottom:14px;}'
+            + '.hdr h2{margin:4px 0;font-size:16pt;color:#572809;}'
+            + '.hdr p{margin:2px 0;font-size:10pt;color:#555;}'
+            + 'table{border-collapse:collapse;width:100%;table-layout:auto;border:2px solid #000;}'
+            + 'th,td{border:1px solid #000;padding:6px 12px;text-align:center;font-size:10pt;white-space:nowrap;}'
+            + 'thead th{background:#d8d8d8;font-weight:700;border-bottom:2px solid #000;}'
+            + 'tfoot td{background:#d0d0d0;font-weight:700;border-top:2px solid #000;}'
+            + 'td:nth-child(2){text-align:left;padding-left:14px;}'
+            + '@media print{body{margin:8mm;}-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+            + '</style></head><body>'
+            + '<div class="hdr">'
+            + '<h2>Stock Order</h2>'
+            + '<p>Date: ' + d.date + '</p>'
+            + '</div>'
+            + '<table>'
+            + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.lotLabel + '</th><th>Quantity</th></tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+            + '<tfoot><tr><td colspan="2">Total</td><td>' + d.totalLot + '</td><td>' + d.totalQty + '</td></tr></tfoot>'
+            + '</table>'
+            + '<script>window.onload=function(){window.print();}<\/script>'
+            + '</body></html>';
+
+        const w = window.open('', '_blank', 'width=700,height=800');
+        w.document.write(html);
+        w.document.close();
+    }
+
+    /* ── Export Excel ── */
+    function exportExcel() {
+        const d = getOrderData();
+        const wsData = [['S.No.', 'Kulfi Name', d.lotLabel, 'Quantity']];
+        d.rows.forEach(function(r) {
+            wsData.push([r.sno, r.name, r.lot !== '' ? r.lot : 0, r.qty !== '' ? r.qty : 0]);
+        });
+        wsData.push(['', 'Total', parseInt(d.totalLot) || 0, parseInt(d.totalQty) || 0]);
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // Auto-size columns
+        const colWidths = wsData[0].map(function(_, ci) {
+            return { wch: Math.max.apply(null, wsData.map(function(row) {
+                return row[ci] ? String(row[ci]).length + 2 : 8;
+            })) };
+        });
+        ws['!cols'] = colWidths;
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Stock Order');
+        XLSX.writeFile(wb, 'StockOrder_' + d.mfgLabel.replace(' ', '_') + '_' + d.date + '.xlsx');
+    }
+
+    /* ── Export Image (PNG) via html2canvas ── */
+    function exportImage() {
+        const d = getOrderData();
+
+        // Build an off-screen div with the clean table
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
+
+        let rows = '';
+        d.rows.forEach(function(r) {
+            rows += '<tr>' +
+                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
+                '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
+                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.lot !== '' ? r.lot : '') + '</td>' +
+                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.qty !== '' ? r.qty : '') + '</td>' +
+                '</tr>';
+        });
+
+        container.innerHTML =
+            '<div style="text-align:center;margin-bottom:10px;">'
+            + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
+            + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+            + '</div>'
+            + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
+            + '<thead><tr>'
+            + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">S.No.</th>'
+            + '<th style="border:1px solid #333;padding:5px 12px;background:#e0e0e0;font-weight:700;">Kulfi Name</th>'
+            + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.lotLabel + '</th>'
+            + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">Quantity</th>'
+            + '</tr></thead>'
+            + '<tbody>' + rows + '</tbody>'
+            + '<tfoot><tr>'
+            + '<td colspan="2" style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">Total</td>'
+            + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalLot + '</td>'
+            + '<td style="border:1px solid #333;padding:5px 10px;background:#d0d0d0;font-weight:700;text-align:center;">' + d.totalQty + '</td>'
+            + '</tr></tfoot>'
+            + '</table>';
+
+        document.body.appendChild(container);
+
+        html2canvas(container, { backgroundColor: '#ffffff', scale: 2 }).then(function(canvas) {
+            document.body.removeChild(container);
+            const link = document.createElement('a');
+            link.download = 'StockOrder_' + d.date + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,80 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Confirm Delete Sale - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-trash"></i> Confirm Delete Sale</h1>
+
+<div class="row">
+    <div class="col-md-6 offset-md-3">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">Delete Sale Record</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Warning:</strong> This action is <u>irreversible</u>. The sale record will be permanently deleted and stock will be restored. This cannot be undone.
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Product</h6>
+                        <p><strong>{{ sale.product.name }}</strong></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Quantity</h6>
+                        <p><strong>{{ sale.quantity }} units</strong></p>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Unit Price</h6>
+                        <p><strong>₹{{ sale.unit_price|floatformat:2 }}</strong></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Total Price</h6>
+                        <p><strong>₹{{ sale.total_price|floatformat:2 }}</strong></p>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Sale Date</h6>
+                        <p><strong>{{ sale.sale_date }}</strong></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted">Recorded By</h6>
+                        <p><strong>{{ sale.recorded_by.get_full_name|default:sale.recorded_by.username }}</strong></p>
+                    </div>
+                </div>
+
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> 
+                    <strong>After deletion:</strong> {{ sale.quantity }} units will be restored to {{ sale.product.name }} stock.
+                </div>
+
+                <form method="POST">
+                    {% csrf_token %}
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="fas fa-trash"></i> Yes, Delete Sale
+                        </button>
+                        <a href="{% url 'view_sales' %}" class="btn btn-secondary d-inline-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                            <i class="fas fa-times"></i> Cancel
+                        </a>
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-inline-flex align-items-center gap-2">
+                            <i class="fas fa-home"></i> Home
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+
+

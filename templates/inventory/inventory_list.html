@@ -1,0 +1,516 @@
+{% extends 'inventory/base.html' %}
+<div class="d-flex gap-2 mb-3">
+    <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-flex align-items-center gap-2">
+        <i class="fas fa-home"></i> Home
+    </a>
+</div>
+
+{% block title %}Inventory - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-boxes"></i> View Inventory</h1>
+
+<div class="print-header" id="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Inventory Report</h4>
+    <p>Date: {% now "Y-m-d H:i:s" %}</p>
+</div>
+
+<style>
+    .sparkline {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 18px;
+        min-width: 120px;
+        overflow-x: auto;
+    }
+
+    .btn-action-compact {
+        width: 30px;
+        min-width: 30px;
+        height: 30px;
+        padding: 0;
+        font-size: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        margin-right: 2px;
+    }
+
+    .btn-action-compact .fas {
+        font-size: 0.75rem;
+    }
+
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .navbar, .sidebar, .row.mb-3, .card-footer, .btn, #print-inventory-btn {
+            display: none !important;
+        }
+        .print-header {
+            display: block !important;
+        }
+        .table thead th {
+            background: #572809 !important;
+            color: #fff !important;
+        }
+        .table {
+            font-size: 11px;
+        }
+        .table td, .table th {
+            padding: 4px;
+        }
+    }
+
+    .sparkline-block {
+        height: 12px;
+        background: #0d6efd;
+        border-radius: 8px;
+        opacity: 0.85;
+    }
+    .sparkline-block.negative {
+        background: #dc3545;
+    }
+    .sparkline-block.zero {
+        background: #adb5bd;
+    }
+
+    .draggable-header {
+        cursor: grab;
+        transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .draggable-header.dragging {
+        opacity: 0.6;
+        background: #e9ecef;
+    }
+    .draggable-header.drag-over {
+        background: #d1e7dd;
+        box-shadow: 0 0 10px rgba(13, 110, 253, 0.3);
+    }
+
+    @media (max-width: 768px) {
+        .table-responsive {
+            font-size: 0.85rem;
+        }
+        .table tbody tr td:nth-child(6),
+        .table tbody tr td:nth-child(7),
+        .table tbody tr td:nth-child(8),
+        .table tbody tr td:nth-child(9) {
+            display: none;
+        }
+        .table thead th:nth-child(6),
+        .table thead th:nth-child(7),
+        .table thead th:nth-child(8),
+        .table thead th:nth-child(9) {
+            display: none;
+        }
+    }
+</style>
+
+<!-- Search + Filter/Sort Bar -->
+<div class="row mb-3">
+    <div class="col-12">
+        <form method="GET" class="row g-2 align-items-center">
+            <div class="col-lg-3 col-md-6">
+                <input type="text" name="search" class="form-control" placeholder="Search name, SKU, category..." value="{{ search_query }}">
+            </div>
+
+            <div class="col-lg-2 col-md-6">
+                <select name="category" class="form-select" multiple size="1">
+                    <option value="Indian Kulfi" {% if 'Indian Kulfi' in category_filter %}selected{% endif %}>Indian Kulfi</option>
+                </select>
+                <small class="text-muted">Only Indian Kulfi available</small>
+            </div>
+
+            <div class="col-lg-2 col-md-6">
+                <select name="status" class="form-select">
+                    <option value="" {% if not status_filter %}selected{% endif %}>All Status</option>
+                    <option value="in_stock" {% if status_filter == 'in_stock' %}selected{% endif %}>In Stock</option>
+                    <option value="low_stock" {% if status_filter == 'low_stock' %}selected{% endif %}>Low Stock</option>
+                </select>
+            </div>
+
+            <div class="col-lg-2 col-md-6">
+                <input type="date" name="as_of_date" class="form-control" value="{{ as_of_date }}">
+                <small class="text-muted">View stock as of date</small>
+            </div>
+
+            <div class="col-lg-2 col-md-6">
+                <select name="movement_type" class="form-select">
+                    <option value="" {% if not movement_filter %}selected{% endif %}>All Movements</option>
+                    <option value="IN" {% if movement_filter == 'IN' %}selected{% endif %}>Stock In</option>
+                    <option value="OUT" {% if movement_filter == 'OUT' %}selected{% endif %}>Stock Out</option>
+                    <option value="ADJUSTMENT" {% if movement_filter == 'ADJUSTMENT' %}selected{% endif %}>Stock Adjustment</option>
+                </select>
+            </div>
+
+            <div class="col-lg-2 col-md-6">
+                <select name="sort" class="form-select">
+                    <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name ↑</option>
+                    <option value="-name" {% if sort_by == '-name' %}selected{% endif %}>Name ↓</option>
+                    <option value="sku" {% if sort_by == 'sku' %}selected{% endif %}>SKU ↑</option>
+                    <option value="-sku" {% if sort_by == '-sku' %}selected{% endif %}>SKU ↓</option>
+                    <option value="current_stock" {% if sort_by == 'current_stock' %}selected{% endif %}>Stock ↑</option>
+                    <option value="-current_stock" {% if sort_by == '-current_stock' %}selected{% endif %}>Stock ↓</option>
+                    <option value="reorder_level" {% if sort_by == 'reorder_level' %}selected{% endif %}>Reorder Level ↑</option>
+                    <option value="-reorder_level" {% if sort_by == '-reorder_level' %}selected{% endif %}>Reorder Level ↓</option>
+                    <option value="cost_price" {% if sort_by == 'cost_price' %}selected{% endif %}>Cost Price ↑</option>
+                    <option value="-cost_price" {% if sort_by == '-cost_price' %}selected{% endif %}>Cost Price ↓</option>
+                    <option value="selling_price" {% if sort_by == 'selling_price' %}selected{% endif %}>Selling Price ↑</option>
+                    <option value="-selling_price" {% if sort_by == '-selling_price' %}selected{% endif %}>Selling Price ↓</option>
+                </select>
+            </div>
+
+            <div class="col-lg-1 col-md-3">
+                <select name="per_page" class="form-select">
+                    <option value="10" {% if per_page|default:10 == 10 %}selected{% endif %}>10</option>
+                    <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                    <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                </select>
+                <small class="text-muted">per page</small>
+            </div>
+
+            <div class="col-lg-2 col-md-3 d-grid">
+                <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                    <i class="fas fa-filter fa-lg"></i> Apply
+                </button>
+            </div>
+
+            <div class="col-lg-2 col-md-3 d-grid">
+                <a href="{% url 'inventory_list' %}?clear=1" class="btn btn-outline-danger btn-lg d-flex align-items-center gap-2">
+                    <i class="fas fa-times fa-lg"></i> Clear
+                </a>
+            </div>
+
+            <div class="col-lg-2 col-md-3 d-grid gap-2">
+                <button type="button" id="reset-filters-btn" class="btn btn-secondary btn-lg d-flex align-items-center gap-2 mb-2">
+                    <i class="fas fa-rotate-left fa-lg"></i> Reset
+                </button>
+                <a href="{% url 'dashboard' %}" class="btn btn-outline-primary btn-lg d-flex align-items-center gap-2">
+                    <i class="fas fa-home fa-lg"></i> Home
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Inventory Table -->
+{% if show_results %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="mb-0"><i class="fas fa-list"></i> Stock Level</h5>
+            <small class="text-muted">
+                Total Stock: <strong>{{ total_stock }}</strong> units | Total Cost Price: <strong>₹{{ total_cost_price|floatformat:2 }}</strong> | Total Sales Price: <strong>₹{{ total_sales_price|floatformat:2 }}</strong>
+                | Stock As Of: <strong>{{ stock_as_of_label }}</strong>
+                | Generated At: <strong>{{ generated_at|date:'Y-m-d H:i:s' }}</strong>
+                {% if movement_filter %}| Movement: {{ movement_filter }}{% endif %}
+            </small>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <a href="{% url 'quick_inventory_entry' %}" class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1 me-1">
+                <i class="fas fa-bolt fa-sm"></i> Quick Entry
+            </a>
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle d-flex align-items-center gap-1" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fas fa-print fa-sm"></i> Print
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item d-flex align-items-center gap-2" href="#" id="print-inventory-action">
+                        <i class="fas fa-print fa-sm"></i> Print Current Page
+                    </a></li>
+                    {% with qs=request.GET.urlencode %}
+                    <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_pdf' %}{% if qs %}?{{ qs }}{% endif %}">
+                        <i class="fas fa-file-pdf fa-sm"></i> Export PDF
+                    </a></li>
+                    <li><a class="dropdown-item d-flex align-items-center gap-2" href="{% url 'print_inventory_excel' %}{% if qs %}?{{ qs }}{% endif %}">
+                        <i class="fas fa-file-excel fa-sm"></i> Export Excel
+                    </a></li>
+                    {% endwith %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th class="draggable-header" draggable="true" data-column="name">Product Name</th>
+                    <th class="draggable-header" draggable="true" data-column="sku">SKU</th>
+                    <th class="draggable-header" draggable="true" data-column="category">Category</th>
+                    <th class="draggable-header" draggable="true" data-column="current_stock">
+                        {% if selected_date %}Stock as of {{ stock_as_of_label }}{% else %}Current Stock (Live){% endif %}
+                    </th>
+                    <th class="draggable-header" draggable="true" data-column="reorder_level">Reorder Level</th>
+                    <th class="draggable-header" draggable="true" data-column="cost_price">Cost Price</th>
+                    <th class="draggable-header" draggable="true" data-column="selling_price">Selling Price</th>
+                    <th class="draggable-header" draggable="true" data-column="status">Status</th>
+                    <th class="draggable-header" draggable="true" data-column="actions">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td><strong>{{ product.name }}</strong></td>
+                    <td>{{ product.sku }}</td>
+                    <td>Indian Kulfi</td>
+                    <td>{{ product.display_stock|default_if_none:product.current_stock }}</td>
+                    <td>{{ product.reorder_level }}</td>
+                    <td>₹{{ product.cost_price }}</td>
+                    <td>₹{{ product.selling_price }}</td>
+                    <td>
+                        {% if product.display_stock|default_if_none:product.current_stock <= product.reorder_level %}
+                        <span class="badge bg-danger">Low Stock</span>
+                        {% else %}
+                        <span class="badge bg-success">In Stock</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'inventory_history' product.id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
+                            <i class="fas fa-history"></i>
+                        </a>
+                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-sm btn-warning btn-action-compact" title="Quick Entry">
+                            <i class="fas fa-bolt"></i>
+                        </a>
+                        {% if user.is_staff %}
+                        <a href="{% url 'clear_stock' product.id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
+                            <i class="fas fa-broom"></i>
+                        </a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted">No products found</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if paginator.num_pages > 1 %}
+    <div class="card-footer">
+        <nav aria-label="Inventory pagination">
+            <ul class="pagination justify-content-center">
+                {% if products.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ products.previous_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}" aria-label="Previous">
+                        <span aria-hidden="true">&laquo;</span>
+                    </a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">&laquo;</span></li>
+                {% endif %}
+
+                {% for page in paginator.page_range %}
+                <li class="page-item {% if products.number == page %}active{% endif %}">
+                    <a class="page-link" href="?page={{ page }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}">{{ page }}</a>
+                </li>
+                {% endfor %}
+
+                {% if products.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ products.next_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}" aria-label="Next">
+                        <span aria-hidden="true">&raquo;</span>
+                    </a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">&raquo;</span></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<script>
+    function saveColOrder(order) {
+        localStorage.setItem('inventory_col_order', JSON.stringify(order));
+    }
+
+    function loadColOrder() {
+        const stored = localStorage.getItem('inventory_col_order');
+        if (!stored) return null;
+        try {
+            return JSON.parse(stored);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function applyColOrder(order) {
+        const table = document.querySelector('.table');
+        if (!table || !order || !order.length) return;
+
+        const headerCells = Array.from(table.querySelectorAll('thead th'));
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+
+        const currentOrder = headerCells.map(h => h.dataset.column);
+        const targetOrder = order.filter(col => currentOrder.includes(col));
+
+        if (!targetOrder.length) return;
+
+        function reorderRow(cells, orderCols) {
+            const newRow = document.createElement('tr');
+            orderCols.forEach(col => {
+                const idx = currentOrder.indexOf(col);
+                if (idx !== -1 && cells[idx]) {
+                    newRow.appendChild(cells[idx].cloneNode(true));
+                }
+            });
+            return newRow;
+        }
+
+        const newThead = document.createElement('tr');
+        const orderCols = targetOrder;
+
+        orderCols.forEach(col => {
+            const idx = currentOrder.indexOf(col);
+            if (idx > -1) {
+                newThead.appendChild(headerCells[idx].cloneNode(true));
+            }
+        });
+
+        const thead = table.querySelector('thead');
+        thead.innerHTML = '';
+        thead.appendChild(newThead);
+
+        const tbody = table.querySelector('tbody');
+        const newBodyFragment = document.createDocumentFragment();
+
+        rows.forEach(row => {
+            const cells = Array.from(row.children);
+            const newRow = reorderRow(cells, targetOrder);
+            newBodyFragment.appendChild(newRow);
+        });
+
+        tbody.innerHTML = '';
+        tbody.appendChild(newBodyFragment);
+        setupDragDrop();
+    }
+
+    function setupDragDrop() {
+        const headers = document.querySelectorAll('.draggable-header');
+        let dragSrcIndex = null;
+        headers.forEach((header, idx) => {
+            header.addEventListener('dragstart', function (e) {
+                dragSrcIndex = idx;
+                this.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            header.addEventListener('dragend', function () {
+                this.classList.remove('dragging');
+            });
+            header.addEventListener('dragenter', function (e) {
+                if (this !== headers[dragSrcIndex]) {
+                    this.classList.add('drag-over');
+                }
+            });
+            header.addEventListener('dragleave', function () {
+                this.classList.remove('drag-over');
+            });
+            header.addEventListener('dragover', function (e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            header.addEventListener('drop', function (e) {
+                e.preventDefault();
+                if (dragSrcIndex === null) return;
+
+                const targetIndex = Array.from(headers).indexOf(this);
+                if (targetIndex < 0 || targetIndex === dragSrcIndex) return;
+
+                const table = document.querySelector('.table');
+                const allRows = [
+                    ...table.querySelectorAll('thead tr'),
+                    ...table.querySelectorAll('tbody tr')
+                ];
+
+                allRows.forEach(row => {
+                    const cells = Array.from(row.children);
+                    const dragCell = cells[dragSrcIndex];
+                    if (!dragCell) return;
+
+                    if (dragSrcIndex < targetIndex) {
+                        row.insertBefore(dragCell, cells[targetIndex + 1] || null);
+                    } else {
+                        row.insertBefore(dragCell, cells[targetIndex]);
+                    }
+                });
+
+                const newOrder = Array.from(document.querySelectorAll('thead .draggable-header')).map(h => h.dataset.column);
+                saveColOrder(newOrder);
+                headers.forEach(h => h.classList.remove('drag-over'));
+                setupDragDrop();
+            });
+        });
+    }
+
+    function updatePrintDateDisplay() {
+        const dateElement = document.getElementById('print-date');
+        if (dateElement) {
+            const d = new Date();
+            dateElement.textContent = d.toLocaleString();
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const colOrder = loadColOrder();
+        if (colOrder) {
+            applyColOrder(colOrder);
+        }
+        setupDragDrop();
+
+        const resetBtn = document.getElementById('reset-filters-btn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function () {
+                localStorage.removeItem('inventory_col_order');
+                window.location.href = '{% url "inventory_list" %}?reset=1';
+            });
+        }
+
+        const printBtn = document.getElementById('print-inventory-action');
+        if (printBtn) {
+            printBtn.addEventListener('click', function (event) {
+                event.preventDefault();
+                updatePrintDateDisplay();
+                window.print();
+            });
+        }
+    });
+</script>
+
+{% endblock %}
+
+
+

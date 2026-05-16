@@ -1,0 +1,174 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Reports - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-chart-bar"></i> Reports Dashboard</h1>
+
+<div class="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Reports Dashboard</h4>
+    <p>Generated on: {% now "Y-m-d H:i:s" %}</p>
+</div>
+
+<style>
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .navbar, .sidebar, .btn {
+            display: none !important;
+        }
+
+        .print-header {
+            display: block !important;
+        }
+    }
+</style>
+
+<!-- Quick Stats -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Today's Sales</h6>
+            <div class="stat-value">{{ daily_sales }}</div>
+            <small class="text-muted">transactions</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Today's Revenue</h6>
+            <div class="stat-value">₹{{ daily_revenue }}</div>
+            <small class="text-muted">today</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>This Week's Sales</h6>
+            <div class="stat-value">{{ weekly_sales }}</div>
+            <small class="text-muted">transactions</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>This Week's Revenue</h6>
+            <div class="stat-value">₹{{ weekly_revenue }}</div>
+            <small class="text-muted">this week</small>
+        </div>
+    </div>
+</div>
+
+<!-- Report Cards -->
+<div class="row">
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-calendar-day" style="font-size: 3rem; color: #AE6F1D; margin-bottom: 15px;"></i>
+                <h5>Daily Report</h5>
+                <p class="text-muted">View sales and profits by day</p>
+                <a href="{% url 'daily_report' %}" class="btn btn-primary">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-calendar-week" style="font-size: 3rem; color: #27ae60; margin-bottom: 15px;"></i>
+                <h5>Weekly Report</h5>
+                <p class="text-muted">View sales trends by week</p>
+                <a href="{% url 'weekly_report' %}" class="btn btn-success">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-chart-pie" style="font-size: 3rem; color: #3498db; margin-bottom: 15px;"></i>
+                <h5>Profit Report</h5>
+                <p class="text-muted">Analyze profit by product</p>
+                <a href="{% url 'profit_report' %}" class="btn btn-info">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-file-invoice-dollar" style="font-size: 3rem; color: #16a085; margin-bottom: 15px;"></i>
+                <h5>Income Statement</h5>
+                <p class="text-muted">Profit and loss statement for selected period</p>
+                <a href="{% url 'income_statement' %}" class="btn btn-teal" style="background-color: #16a085; color: #fff; border-color: #16a085;">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-boxes" style="font-size: 3rem; color: #8e44ad; margin-bottom: 15px;"></i>
+                <h5>Stock Report</h5>
+                <p class="text-muted">View stock-in entries by date range and manufacturer</p>
+                <a href="{% url 'stock_report' %}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6 mb-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-history" style="font-size: 3rem; color: #f39c12; margin-bottom: 15px;"></i>
+                <h5>Sales History</h5>
+                <p class="text-muted">View all transactions</p>
+                <a href="{% url 'sales_history' %}" class="btn btn-warning">
+                    <i class="fas fa-arrow-right"></i> View
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

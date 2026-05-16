@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>View Inventory Report</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #333;
+            font-size: 13px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #572809;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+        }
+
+        .report-logo {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            margin: 0 auto 8px;
+            display: block;
+        }
+
+        .header h1 {
+            margin: 0;
+            color: #572809;
+            font-size: 24px;
+            letter-spacing: 0.5px;
+        }
+
+        .header p {
+            margin: 6px 0 0;
+            color: #555;
+        }
+
+        .summary {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 16px 0;
+            flex-wrap: wrap;
+        }
+
+        .summary-item {
+            flex: 1;
+            min-width: 170px;
+            background: #f7f7f7;
+            border: 1px solid #e2e2e2;
+            border-radius: 6px;
+            padding: 10px 12px;
+        }
+
+        .summary-item .label {
+            font-size: 11px;
+            color: #666;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .summary-item .value {
+            margin-top: 4px;
+            font-size: 18px;
+            font-weight: 700;
+            color: #222;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        thead {
+            background: #572809;
+            color: #fff;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px 10px;
+            text-align: left;
+            vertical-align: middle;
+            font-size: 12px;
+        }
+
+        tbody tr:nth-child(even) {
+            background: #fafafa;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .low-stock {
+            color: #b42318;
+            font-weight: 700;
+        }
+
+        .in-stock {
+            color: #166534;
+            font-weight: 700;
+        }
+
+        .no-print {
+            text-align: right;
+            margin-bottom: 12px;
+        }
+
+        .no-print button {
+            border: none;
+            background: #572809;
+            color: #fff;
+            padding: 8px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .footer {
+            margin-top: 16px;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+            color: #666;
+            font-size: 11px;
+            text-align: center;
+        }
+
+        @media print {
+            body {
+                padding: 0;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .no-print {
+                display: none;
+            }
+
+            thead {
+                background: #572809 !important;
+                color: #fff !important;
+            }
+
+            th {
+                color: #fff !important;
+            }
+
+            tr {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="no-print">
+            <button onclick="window.print()">Print this page</button>
+        </div>
+
+        <div class="header">
+            <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
+            <h1>VIEW INVENTORY REPORT</h1>
+            <p>Stock As Of: <strong>{{ stock_as_of_label }}</strong></p>
+            <p>Generated At: <strong>{{ now|date:'Y-m-d H:i' }}</strong></p>
+        </div>
+
+        <div class="summary">
+            <div class="summary-item">
+                <div class="label">Total Products</div>
+                <div class="value">{{ products|length }}</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">Total Stock</div>
+                <div class="value">{{ total_stock }}</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">Total Cost Price</div>
+                <div class="value">₹{{ total_cost_price|floatformat:2 }}</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">Total Sales Price</div>
+                <div class="value">₹{{ total_sales_price|floatformat:2 }}</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Product Name</th>
+                    <th>SKU</th>
+                    <th>Category</th>
+                    <th class="text-center">Stock</th>
+                    <th class="text-center">Reorder Level</th>
+                    <th class="text-right">Cost Price</th>
+                    <th class="text-right">Selling Price</th>
+                    <th class="text-center">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td>{{ product.name }}</td>
+                    <td>{{ product.sku }}</td>
+                    <td>{{ product.category }}</td>
+                    <td class="text-center">{{ product.display_stock|default:product.current_stock }}</td>
+                    <td class="text-center">{{ product.reorder_level }}</td>
+                    <td class="text-right">₹{{ product.cost_price|floatformat:2 }}</td>
+                    <td class="text-right">₹{{ product.selling_price|floatformat:2 }}</td>
+                    <td class="text-center">
+                        {% if product.display_stock|default:product.current_stock <= product.reorder_level %}
+                        <span class="low-stock">Low Stock</span>
+                        {% else %}
+                        <span class="in-stock">In Stock</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" class="text-center">No products found for current filters</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="footer">
+            Indian Kulfi Inventory System
+        </div>
+    </div>
+</body>
+</html>

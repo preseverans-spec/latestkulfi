@@ -1,0 +1,32 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Confirm Clear Stock - {{ product.name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5>Confirm Clear Stock</h5>
+    </div>
+    <div class="card-body">
+        <p>Are you sure you want to clear all stock for <strong>{{ product.name }}</strong> (currently {{ product.current_stock }} units)?</p>
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Warning:</strong> This action is <u>irreversible</u>. It will set stock to 0 and create an adjustment record. This cannot be undone.
+        </div>
+
+        <form method="POST">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Yes, clear stock</button>
+            <a href="{% url 'inventory_list' %}" class="btn btn-secondary d-inline-flex align-items-center gap-2" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                <i class="fas fa-times"></i> Cancel
+            </a>
+            <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-inline-flex align-items-center gap-2">
+                <i class="fas fa-home"></i> Home
+            </a>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+
+

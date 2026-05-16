@@ -1,0 +1,232 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Dashboard - Kulfi Inventory{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-chart-line"></i> Dashboard</h1>
+
+<!-- Key Metrics Row -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Today's Sales</h6>
+            <div class="stat-value">{{ total_today_sales }}</div>
+            <small class="text-muted">transactions</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Stock</h6>
+            <div class="stat-value">{{ total_stock }}</div>
+            <small class="text-muted">units in inventory</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Revenue</h6>
+            <div class="stat-value">₹{{ total_today_revenue }}</div>
+            <small class="text-muted">today</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Operation Cost</h6>
+            <div class="stat-value">₹{{ total_today_operation_cost|floatformat:2 }}</div>
+            <small class="text-muted">today</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Net Profit</h6>
+            <div class="stat-value">₹{{ total_today_net_profit|floatformat:2 }}</div>
+            <small class="text-muted">after operations</small>
+        </div>
+    </div>
+</div>
+
+<!-- Low Stock Alerts -->
+{% if low_stock_products %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-exclamation-triangle" style="color: white !important;"></i> Low Stock Alerts</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-unstyled mb-0">
+                {% for product in low_stock_products %}
+                    <li>
+                        <strong>{{ product.name }}</strong> (SKU: {{ product.sku }}) —
+                        <span class="text-danger font-weight-bold">{{ product.current_stock }}</span>
+                    </li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Charts and Statistics Row -->
+<div class="row">
+    <!-- Sales Trend -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-chart-area" style="color: white !important;"></i> 7-Day Sales Trend</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="salesChart" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Top Products -->
+    <div class="col-lg-6 mb-4">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-star" style="color: white !important;"></i> Top Products</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Sales Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for product in top_products %}
+                            <tr>
+                                <td>
+                                    <strong>{{ product.name }}</strong><br>
+                                    <small class="text-muted">{{ product.category }}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-success">{{ product.sale_count }}</span>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="2" class="text-center text-muted">No sales data yet</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-2">
+                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-bolt"></i><br>
+                            <small>Quick Sales Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cogs"></i><br>
+                            <small>Quick Operations Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-bolt"></i><br>
+                            <small>Quick Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{% url 'inventory_list' %}" class="btn btn-success w-100">
+                            <i class="fas fa-boxes"></i><br>
+                            <small>View Inventory</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    // Sales Trend Chart
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    const salesData = {{ last_7_days_sales|safe }};
+    
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: salesData.map(d => d.date),
+            datasets: [
+                {
+                    label: 'Sales Count',
+                    data: salesData.map(d => d.sales),
+                    borderColor: '#AE6F1D',
+                    backgroundColor: 'rgba(174, 111, 29, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Revenue (₹)',
+                    data: salesData.map(d => d.revenue),
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Sales Count'
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    title: {
+                        display: true,
+                        text: 'Revenue (₹)'
+                    },
+                    grid: {
+                        drawOnChartArea: false,
+                    },
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}
+
+
+

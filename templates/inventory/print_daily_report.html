@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Report - {{ selected_date|date:'Y-m-d' }}</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #333; font-size: 13px; }
+        .container { max-width: 980px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #333; padding-bottom: 12px; }
+        .report-logo { width: 72px; height: 72px; object-fit: contain; margin: 0 auto 8px; display: block; }
+        .header h2 { margin: 0 0 6px; letter-spacing: 1px; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .summary { display: flex; gap: 10px; margin: 16px 0; }
+        .summary-item { flex: 1; background: #f5f5f5; border-radius: 4px; padding: 10px; text-align: center; }
+        .summary-item .label { font-size: 12px; color: #666; }
+        .summary-item .value { font-size: 18px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #ddd; padding: 9px 11px; font-size: 12px; }
+        thead { background: #572809; color: #fff; }
+        .no-print { text-align: right; margin-bottom: 12px; }
+        .no-print button { border: 0; background: #572809; color: #fff; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
+        .footer { margin-top: 16px; font-size: 11px; color: #888; text-align: center; }
+        @media print {
+            .no-print { display: none; }
+            body {
+                padding: 0;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            thead {
+                background: #572809 !important;
+                color: #fff !important;
+            }
+            th {
+                color: #fff !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="no-print">
+        <button onclick="window.print()">Print this page</button>
+    </div>
+
+    <div class="header">
+        <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
+        <h1>DAILY REPORT</h1>
+        <p>Date: {{ selected_date|date:'l, F j, Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
+    </div>
+
+    <div class="summary">
+        <div class="summary-item"><div class="label">Transactions</div><div class="value">{{ total_transactions }}</div></div>
+        <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Cost</div><div class="value">Rs.{{ total_cost|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Gross Profit</div><div class="value">Rs.{{ total_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Operation Cost</div><div class="value">Rs.{{ total_operation_cost|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Net Profit</div><div class="value">Rs.{{ net_profit|floatformat:2 }}</div></div>
+    </div>
+
+    <table>
+        <thead>
+        <tr>
+            <th>Product</th>
+            <th>Quantity</th>
+            <th>Unit Price</th>
+            <th>Revenue</th>
+            <th>Cost</th>
+            <th>Profit</th>
+            <th>Recorded By</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for item in sales %}
+        <tr>
+            <td>{{ item.product_name }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>Rs.{{ item.unit_price|floatformat:2 }}</td>
+            <td>Rs.{{ item.revenue|floatformat:2 }}</td>
+            <td>Rs.{{ item.cost|floatformat:2 }}</td>
+            <td>Rs.{{ item.profit|floatformat:2 }}</td>
+            <td>{{ item.recorded_by }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" style="text-align:center;color:#777;">No sales recorded for this date</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">Computer-generated report.</div>
+</div>
+</body>
+</html>
+
+
+

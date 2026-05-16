@@ -1,0 +1,310 @@
+
+{% extends 'inventory/base.html' %}
+
+{% block title %}View Sales - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-calendar-day"></i> View Sales by Date</h1>
+
+<div class="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Sales Report</h4>
+    <p>Date: {% if selected_date %}{{ selected_date|date:'Y-m-d' }}{% else %}{% now "Y-m-d" %}{% endif %}</p>
+</div>
+
+<style>
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .navbar, .sidebar, .btn-group, .btn, form, .row.mt-4 {
+            display: none !important;
+        }
+
+        .print-header {
+            display: block !important;
+        }
+
+        .table thead th {
+            background: #572809 !important;
+            color: #fff !important;
+        }
+    }
+</style>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Select Date</h5>
+            </div>
+            <div class="card-body">
+                <form method="GET" class="row g-3 align-items-end">
+                    <div class="col-md-4">
+                        <label for="date" class="form-label">Select Date</label>
+                        <input type="date" id="date" name="date" class="form-control"
+                               value="{{ selected_date|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="salesperson" class="form-label">Sales Person</label>
+                        <select id="salesperson" name="salesperson" class="form-select">
+                            <option value="">All Sales Persons</option>
+                            {% for person in salespeople %}
+                            <option value="{{ person.id }}" {% if selected_salesperson_id == person.id|stringformat:'s' %}selected{% endif %}>
+                                {{ person.get_full_name|default:person.username }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-search"></i> View Sales
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        <a href="{% url 'view_sales' %}" class="btn btn-outline-secondary w-100">
+                            <i class="fas fa-times"></i> Clear
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    {% if date_submitted %}
+                        Sales for {{ selected_date|date:'l, F j, Y' }}
+                        {% if selected_salesperson %}
+                            - {{ selected_salesperson.get_full_name|default:selected_salesperson.username }}
+                        {% endif %}
+                    {% else %}
+                        Sales
+                    {% endif %}
+                </h5>
+                <div class="d-flex gap-2">
+                    {% if daily_sales %}
+                    <form method="POST" action="{% url 'delete_sales_for_date' %}" class="d-inline" onsubmit="return confirm('Delete all sales recorded on {{ selected_date|date:'Y-m-d' }} and recalculate inventory?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="selected_salesperson_id" value="{{ selected_salesperson_id }}">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete all sales for this date">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </form>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-print"></i> Print
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{% url 'print_sales_html' %}?date={{ selected_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" target="_blank">
+                                <i class="fas fa-file-pdf"></i> Print (HTML)
+                            </a></li>
+                            <li><a class="dropdown-item" href="{% url 'print_sales_pdf' %}?date={{ selected_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
+                                <i class="fas fa-file-pdf"></i> Download PDF
+                            </a></li>
+                            <li><a class="dropdown-item" href="{% url 'print_sales_excel' %}?date={{ selected_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
+                                <i class="fas fa-file-excel"></i> Download Excel
+                            </a></li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                    <a href="?date={{ previous_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="fas fa-chevron-left"></i> Previous Day
+                    </a>
+                    <a href="?date={{ next_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                        Next Day <i class="fas fa-chevron-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if restored_units > 0 %}
+                <div class="alert alert-success d-flex align-items-center justify-content-between" role="alert">
+                    <span>
+                        <i class="fas fa-check-circle"></i>
+                        Restored <strong>{{ restored_units }}</strong> units to stock
+                        {% if restored_product %}
+                            for <strong>{{ restored_product }}</strong>
+                        {% endif %}
+                        .
+                    </span>
+                    <span class="badge bg-success">Stock Updated</span>
+                </div>
+                {% endif %}
+
+                {% if not date_submitted %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-calendar-day fa-3x text-muted mb-3"></i>
+                        <h4 class="text-muted">Select a Date</h4>
+                        <p class="text-muted">Choose a date above and click <strong>View Sales</strong> to see the sales records.</p>
+                    </div>
+                {% elif daily_sales %}
+                    <!-- Summary Cards -->
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body text-center">
+                                    <h3 class="card-title" style="color: white !important;">{{ total_sales_count }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Products Sold</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h3 class="card-title" style="color: white !important;">₹{{ total_revenue|floatformat:2 }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Revenue</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card text-white" style="background: linear-gradient(135deg, #1D3557 0%, #2c4f80 100%);">
+                                <div class="card-body text-center">
+                                    <h3 class="card-title" style="color: white !important;">{{ total_quantity }}</h3>
+                                    <p class="card-text" style="color: white !important;">Total Quantity Sold</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sales Table -->
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Quantity</th>
+                                    <th>Unit Price</th>
+                                    <th>Total Price</th>
+                                    <th>Recorded By</th>
+                                    <th>Notes</th>
+                                    <th class="text-center">Delete</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for sale in daily_sales %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ sale.product_name }}</strong>
+                                    </td>
+                                    <td>{{ sale.quantity }}</td>
+                                    <td>₹{{ sale.unit_price|floatformat:2 }}</td>
+                                    <td><strong>₹{{ sale.total_price|floatformat:2 }}</strong></td>
+                                    <td>{{ sale.recorded_by }}</td>
+                                    <td>
+                                        {% if sale.notes and sale.notes != '-' %}
+                                            {{ sale.notes|truncatechars:80 }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <form method="POST" action="{% url 'delete_grouped_sale' %}" class="d-inline" onsubmit="return confirm('Delete sales for {{ sale.product_name|escapejs }} and recalculate inventory?');">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
+                                            <input type="hidden" name="selected_salesperson_id" value="{{ selected_salesperson_id }}">
+                                            <input type="hidden" name="product_name" value="{{ sale.product_name }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete this product sales">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
+                        <h4 class="text-muted">No Sales Found</h4>
+                        <p class="text-muted">
+                            There were no sales recorded for {{ selected_date|date:'l, F j, Y' }}
+                            {% if selected_salesperson %}
+                                by {{ selected_salesperson.get_full_name|default:selected_salesperson.username }}
+                            {% endif %}
+                        </p>
+                        <a href="{% url 'quick_sales_entry' %}?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Record Sales
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-bolt"></i><br>
+                            <small>Quick Sales Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cogs"></i><br>
+                            <small>Quick Operations Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'sales_history' %}" class="btn btn-success w-100">
+                            <i class="fas fa-history"></i><br>
+                            <small>Sales History</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'dashboard' %}" class="btn btn-success w-100">
+                            <i class="fas fa-home"></i><br>
+                            <small>Dashboard</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{% endblock %}
+
+

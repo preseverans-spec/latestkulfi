@@ -1,0 +1,476 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Quick Inventory Entry - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-warehouse"></i> Quick Inventory Entry</h1>
+
+{% if recorded_items %}
+<div class="card mb-4 border-success">
+    <div class="card-header bg-success text-white">
+        <h5 class="mb-0"><i class="fas fa-check-circle"></i> Successfully Recorded — {{ recorded_summary.total_effective_qty|default:0 }} Qty{% if recorded_summary.created_count %} ({{ recorded_summary.created_count }} Movement(s)){% endif %}</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Product</th>
+                        <th>SKU</th>
+                        <th>Type</th>
+                        <th>Qty Entered</th>
+                        <th>Unit</th>
+                        <th>Effective Qty</th>
+                        <th>Cost Price</th>
+                        <th>Total Value</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in recorded_items %}
+                    <tr>
+                        <td><strong>{{ item.name }}</strong></td>
+                        <td>{{ item.sku }}</td>
+                        <td>
+                            {% if item.movement_type == 'IN' %}
+                                <span class="badge bg-success">Stock In</span>
+                            {% elif item.movement_type == 'OUT' %}
+                                <span class="badge bg-danger">Stock Out</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">
+                                    {% if item.adjustment_mode == 'MINUS' %}- Adjustment{% else %}+ Adjustment{% endif %}
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.quantity }}</td>
+                        <td>{{ item.unit }}</td>
+                        <td>{{ item.effective_qty }}</td>
+                        <td>₹{{ item.cost_price }}</td>
+                        <td>₹{{ item.total_value }}</td>
+                        <td>{{ item.movement_date }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<form method="POST" id="quick-inventory-form">
+    {% csrf_token %}
+    <input type="hidden" name="selected_manufacturer" id="selected_manufacturer" value="{{ selected_manufacturer|default:'' }}">
+
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="movement_date" class="form-label">Movement Date</label>
+            <input type="date" id="movement_date" name="movement_date" class="form-control" value="{{ selected_movement_date|date:'Y-m-d' }}" required>
+        </div>
+        <div class="col-md-3">
+            <label for="manufacturer_filter" class="form-label">Manufacturer</label>
+            <select id="manufacturer_filter" class="form-select">
+                <option value="" {% if not selected_manufacturer %}selected{% endif %}>Select Manufacturer</option>
+                <option value="Indian Kulfi" {% if selected_manufacturer == 'Indian Kulfi' %}selected{% endif %}>Indian Kulfi Products</option>
+                <option value="Kulfi Corner" {% if selected_manufacturer == 'Kulfi Corner' %}selected{% endif %}>Kulfi Corner Products</option>
+            </select>
+        </div>
+        <div class="col-md-6 d-flex align-items-end justify-content-end gap-2">
+            <button type="button" id="cancel-quick-inventory" class="btn btn-outline-secondary btn-lg">
+                <i class="fas fa-times"></i> Cancel
+            </button>
+            <button type="submit" class="btn btn-success btn-lg">
+                <i class="fas fa-save"></i> Record All Movements
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Products List</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Product</th>
+                            <th>Stock</th>
+                            <th>Cost Price</th>
+                            <th>Movement Type</th>
+                            <th class="adjustment-col" style="display: none;">Adjustment Mode</th>
+                            <th>Unit</th>
+                            <th>Quantity</th>
+                            <th>Effective Qty</th>
+                            <th>Total Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in product_groups %}
+                        <tr data-ik-id="{{ group.ik.id|default:'' }}"
+                            data-ik-cost="{% if group.ik_cost_override %}{{ group.ik_cost_override }}{% elif group.ik %}{{ group.ik.cost_price }}{% else %}0{% endif %}"
+                            data-ik-stock="{{ group.ik_stock|default:'0' }}"
+                            data-kc-id="{{ group.kc.id|default:'' }}"
+                            data-kc-cost="{% if group.kc_cost_override %}{{ group.kc_cost_override }}{% elif group.kc %}{{ group.kc.cost_price }}{% else %}0{% endif %}"
+                            data-kc-stock="{{ group.kc_stock|default:'0' }}">
+                            <td>
+                                {{ group.name }}
+                                <input type="hidden" name="product[]" class="product-id-input" value="{{ group.ik.id|default:'' }}">
+                            </td>
+                            <td class="stock-cell">{{ group.ik_stock|default:'0' }}</td>
+                            <td>
+                                <span class="badge bg-secondary cost-price-display">₹{% if selected_manufacturer == 'Kulfi Corner' %}{% if group.kc_cost_override %}{{ group.kc_cost_override|floatformat:2 }}{% else %}{{ group.kc.cost_price|default:'0'|floatformat:2 }}{% endif %}{% else %}{% if group.ik_cost_override %}{{ group.ik_cost_override|floatformat:2 }}{% else %}{{ group.ik.cost_price|default:'0'|floatformat:2 }}{% endif %}{% endif %}</span>
+                                <input type="hidden" name="cost_price[]" class="cost-price-input" value="{% if selected_manufacturer == 'Kulfi Corner' %}{% if group.kc_cost_override %}{{ group.kc_cost_override }}{% elif group.kc %}{{ group.kc.cost_price }}{% else %}0{% endif %}{% else %}{% if group.ik_cost_override %}{{ group.ik_cost_override }}{% elif group.ik %}{{ group.ik.cost_price }}{% else %}0{% endif %}{% endif %}">
+                            </td>
+                            <td>
+                                <select name="movement_type[]" class="form-select movement-type-select" style="max-width: 150px;">
+                                    <option value="IN">Stock In</option>
+                                    <option value="OUT">Stock Out</option>
+                                    <option value="ADJUSTMENT">Adjustment</option>
+                                </select>
+                            </td>
+                            <td class="adjustment-col" style="display: none;">
+                                <select name="adjustment_mode[]" class="form-select adjustment-mode-select" style="max-width: 180px; display: none;">
+                                    <option value="PLUS">+ Adjustment</option>
+                                    <option value="MINUS">- Adjustment</option>
+                                </select>
+                            </td>
+                            <td>
+                                <select name="quantity_unit[]" class="form-select quantity-unit" style="max-width: 130px;">
+                                    <option value="NOS">Nos</option>
+                                    <option value="PACK" selected>Pack</option>
+                                </select>
+                            </td>
+                            <td>
+                                <input type="number" name="quantity[]" min="0" value="" placeholder="0" class="form-control quantity-input" style="max-width: 120px;">
+                            </td>
+                            <td>
+                                <span class="effective-qty">0</span>
+                            </td>
+                            <td>
+                                <span class="row-total">₹0.00</span>
+                            </td>
+                            <input type="hidden" name="movement_date[]" class="movement-date-value" value="{{ selected_movement_date|date:'Y-m-d' }}">
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <div class="alert alert-info py-2 mb-0">
+                            <strong>Total Pack:</strong> <span id="summary-total-packs">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="alert alert-success py-2 mb-0">
+                            <strong>Effective Qty:</strong> <span id="summary-effective-qty">0</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="alert alert-warning py-2 mb-0">
+                            <strong>Total Value:</strong> ₹<span id="summary-total-value">0.00</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="alert alert-secondary py-2 mb-0">
+                            <strong>Products:</strong> <span id="summary-product-count">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const quickInventoryForm = document.getElementById('quick-inventory-form');
+    const movementDateInput = document.getElementById('movement_date');
+    const manufacturerFilter = document.getElementById('manufacturer_filter');
+    const selectedManufacturerInput = document.getElementById('selected_manufacturer');
+    const cancelButton = document.getElementById('cancel-quick-inventory');
+
+    if (cancelButton) {
+        cancelButton.addEventListener('click', function() {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = "{% url 'dashboard' %}";
+            }
+        });
+    }
+
+    function syncMovementDateToRows() {
+        const dateValue = movementDateInput ? movementDateInput.value : '';
+        document.querySelectorAll('.movement-date-value').forEach(function(input) {
+            input.value = dateValue;
+        });
+    }
+
+    movementDateInput.addEventListener('change', function() {
+        syncMovementDateToRows();
+        const dateValue = this.value;
+        const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
+        const params = new URLSearchParams(window.location.search);
+        if (dateValue) {
+            params.set('movement_date', dateValue);
+        } else {
+            params.delete('movement_date');
+        }
+        if (manufacturer) {
+            params.set('manufacturer', manufacturer);
+        } else {
+            params.delete('manufacturer');
+        }
+        window.location.search = params.toString();
+        refreshProductsBySelection();
+    });
+
+    function updateSummary() {
+        let totalPacks = 0;
+        let totalEffectiveQty = 0;
+        let totalValue = 0;
+        let productCount = 0;
+
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            if (row.style.display === 'none') {
+                return;
+            }
+
+            const quantity = parseInt(row.querySelector('.quantity-input').value, 10) || 0;
+            const unit = row.querySelector('.quantity-unit').value;
+            const effective = parseInt(row.querySelector('.effective-qty').textContent, 10) || 0;
+            const rowValue = parseFloat(row.querySelector('.row-total').textContent.replace('₹', '')) || 0;
+
+            if (quantity > 0) {
+                productCount += 1;
+            }
+            if (unit === 'PACK') {
+                totalPacks += quantity;
+            }
+
+            totalEffectiveQty += effective;
+            totalValue += rowValue;
+        });
+
+        document.getElementById('summary-total-packs').textContent = totalPacks;
+        document.getElementById('summary-effective-qty').textContent = totalEffectiveQty;
+        document.getElementById('summary-total-value').textContent = totalValue.toFixed(2);
+        document.getElementById('summary-product-count').textContent = productCount;
+    }
+
+    function updateEffectiveQty(row) {
+        const quantityInput = row.querySelector('.quantity-input');
+        const unitSelect = row.querySelector('.quantity-unit');
+        const effectiveSpan = row.querySelector('.effective-qty');
+        const rowTotalSpan = row.querySelector('.row-total');
+        const costPrice = parseFloat(row.querySelector('input[name="cost_price[]"]').value || 0);
+
+        let qty = parseInt(quantityInput.value, 10) || 0;
+        if (qty < 0) qty = 0;
+
+        const unit = unitSelect.value;
+        const effective = unit === 'PACK' ? qty * 6 : qty;
+
+        effectiveSpan.textContent = effective;
+        const rowTotal = effective * costPrice;
+        rowTotalSpan.textContent = '₹' + rowTotal.toFixed(2);
+
+        return effective;
+    }
+
+    function applyUnitToAllRows(unitValue) {
+        document.querySelectorAll('.quantity-unit').forEach(function(select) {
+            if (!select.disabled) {
+                select.value = unitValue;
+            }
+        });
+
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            if (row.style.display !== 'none') {
+                updateEffectiveQty(row);
+            }
+        });
+        updateSummary();
+    }
+
+    function applyMovementTypeToAllRows(movementType) {
+        document.querySelectorAll('.movement-type-select').forEach(function(select) {
+            if (!select.disabled) {
+                select.value = movementType;
+            }
+        });
+
+        document.querySelectorAll('.adjustment-col').forEach(function(cell) {
+            cell.style.display = movementType === 'ADJUSTMENT' ? 'table-cell' : 'none';
+        });
+
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            if (row.style.display === 'none') return;
+            const adjustmentSelect = row.querySelector('.adjustment-mode-select');
+            if (!adjustmentSelect) return;
+            adjustmentSelect.style.display = movementType === 'ADJUSTMENT' ? 'block' : 'none';
+        });
+    }
+
+    function switchManufacturer(manufacturer) {
+        if (!manufacturer) {
+            document.querySelectorAll('tbody tr').forEach(function(row) {
+                row.style.display = 'none';
+                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = true; });
+                const qtyInput = row.querySelector('.quantity-input');
+                const effSpan = row.querySelector('.effective-qty');
+                const totalSpan = row.querySelector('.row-total');
+                if (qtyInput) qtyInput.value = '';
+                if (effSpan) effSpan.textContent = '0';
+                if (totalSpan) totalSpan.textContent = '₹0.00';
+            });
+            updateSummary();
+            return;
+        }
+
+        const isKC = manufacturer === 'Kulfi Corner';
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            const ikId = row.getAttribute('data-ik-id') || '';
+            const kcId = row.getAttribute('data-kc-id') || '';
+            const ikCost = row.getAttribute('data-ik-cost') || '0';
+            const kcCost = row.getAttribute('data-kc-cost') || '0';
+            const ikStock = row.getAttribute('data-ik-stock') || '0';
+            const kcStock = row.getAttribute('data-kc-stock') || '0';
+
+            const activeId = isKC ? kcId : ikId;
+            const activeCost = isKC ? kcCost : ikCost;
+            const activeStock = isKC ? kcStock : ikStock;
+
+            const productInput = row.querySelector('.product-id-input');
+            const costBadge = row.querySelector('.cost-price-display');
+            const costInput = row.querySelector('.cost-price-input');
+            const stockCell = row.querySelector('.stock-cell');
+
+            if (productInput) productInput.value = activeId;
+            if (costBadge) costBadge.textContent = '₹' + parseFloat(activeCost).toFixed(2);
+            if (costInput) costInput.value = activeCost;
+            if (stockCell) stockCell.textContent = activeStock;
+
+            if (!activeId) {
+                row.style.display = 'none';
+                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = true; });
+                const qtyInput = row.querySelector('.quantity-input');
+                const effSpan = row.querySelector('.effective-qty');
+                const totalSpan = row.querySelector('.row-total');
+                if (qtyInput) qtyInput.value = '';
+                if (effSpan) effSpan.textContent = '0';
+                if (totalSpan) totalSpan.textContent = '₹0.00';
+            } else {
+                row.style.display = '';
+                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = false; });
+            }
+
+            updateEffectiveQty(row);
+        });
+
+        updateSummary();
+    }
+
+    function refreshProductsBySelection() {
+        const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
+        const movementDate = movementDateInput ? movementDateInput.value : '';
+        if (!manufacturer || !movementDate) {
+            switchManufacturer('');
+            return;
+        }
+        switchManufacturer(manufacturer);
+    }
+
+    document.querySelectorAll('tbody tr').forEach(function(row) {
+        const quantityInput = row.querySelector('.quantity-input');
+        const unitSelect = row.querySelector('.quantity-unit');
+        const movementTypeSelect = row.querySelector('.movement-type-select');
+        const adjustmentModeSelect = row.querySelector('.adjustment-mode-select');
+
+        function fireUpdate() {
+            if (quantityInput.value < 0) quantityInput.value = 0;
+            updateEffectiveQty(row);
+            updateSummary();
+        }
+
+        quantityInput.addEventListener('input', fireUpdate);
+        unitSelect.addEventListener('change', function() {
+            applyUnitToAllRows(unitSelect.value);
+        });
+        movementTypeSelect.addEventListener('change', function() {
+            applyMovementTypeToAllRows(movementTypeSelect.value);
+        });
+
+        if (adjustmentModeSelect) {
+            adjustmentModeSelect.addEventListener('change', function() {
+                document.querySelectorAll('.adjustment-mode-select').forEach(function(select) {
+                    select.value = adjustmentModeSelect.value;
+                });
+            });
+        }
+
+        fireUpdate();
+    });
+
+    // Keep Adjustment Mode hidden on initial load unless movement type is set to ADJUSTMENT.
+    const initialMovementType = document.querySelector('.movement-type-select')?.value || 'IN';
+    applyMovementTypeToAllRows(initialMovementType);
+
+    if (manufacturerFilter) {
+        manufacturerFilter.addEventListener('change', function() {
+            if (selectedManufacturerInput) {
+                selectedManufacturerInput.value = this.value || '';
+            }
+            const movementDate = movementDateInput ? movementDateInput.value : '';
+            if (movementDate) {
+                const params = new URLSearchParams(window.location.search);
+                params.set('movement_date', movementDate);
+                if (this.value) {
+                    params.set('manufacturer', this.value);
+                } else {
+                    params.delete('manufacturer');
+                }
+                window.location.search = params.toString();
+                return;
+            }
+            refreshProductsBySelection();
+            const visibleMovementType = document.querySelector('tbody tr:not([style*="display: none"]) .movement-type-select');
+            if (visibleMovementType) {
+                applyMovementTypeToAllRows(visibleMovementType.value);
+            }
+        });
+    }
+
+    if (selectedManufacturerInput && manufacturerFilter) {
+        selectedManufacturerInput.value = manufacturerFilter.value || '';
+    }
+
+    syncMovementDateToRows();
+
+    if (quickInventoryForm) {
+        quickInventoryForm.addEventListener('submit', function(event) {
+            const movementDate = movementDateInput ? movementDateInput.value : '';
+            const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
+            if (!movementDate || !manufacturer) {
+                event.preventDefault();
+                alert('Please select both Movement Date and Manufacturer before recording inventory.');
+                return;
+            }
+        });
+    }
+
+    refreshProductsBySelection();
+
+    // initial summary update
+    updateSummary();
+});
+</script>
+
+{% endblock %}
+
+
+

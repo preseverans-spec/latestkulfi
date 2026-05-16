@@ -1,0 +1,73 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Inventory History - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-history"></i> Inventory History - {{ product.name }}</h1>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <p><strong>Current Stock:</strong> {{ product.current_stock }} units</p>
+        <p><strong>Reorder Level:</strong> {{ product.reorder_level }} units</p>
+        <div class="d-flex gap-2 mb-3">
+            <a href="{% url 'inventory_list' %}" class="btn btn-secondary d-flex align-items-center gap-2">
+                <i class="fas fa-arrow-left"></i> Back to Inventory
+            </a>
+            <a href="{% url 'dashboard' %}" class="btn btn-outline-primary d-flex align-items-center gap-2">
+                <i class="fas fa-home"></i> Home
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-list"></i> Movement History</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Quantity</th>
+                    <th>Reference</th>
+                    <th>Created By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for movement in movements %}
+                <tr>
+                    <td>{{ movement.created_at|date:'M d, Y H:i' }}</td>
+                    <td>
+                        {% if movement.movement_type == 'IN' %}
+                        <span class="badge bg-success">Stock In</span>
+                        {% elif movement.movement_type == 'OUT' %}
+                        <span class="badge bg-danger">Stock Out</span>
+                        {% else %}
+                        <span class="badge bg-warning">Adjustment</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ movement.quantity }}</td>
+                    <td>{{ movement.reference_document|default:'-' }}</td>
+                    <td>
+                        {% if movement.created_by %}
+                        {{ movement.created_by.first_name|default:movement.created_by.username }}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No movement history</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+
+

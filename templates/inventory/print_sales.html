@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales Report - {{ selected_date|date:'Y-m-d' }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            padding: 20px;
+            color: #333;
+            font-size: 13px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 15px;
+        }
+
+        .report-logo {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            margin: 0 auto 8px;
+            display: block;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+            color: #572809;
+        }
+
+        .header h2 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: #572809;
+            letter-spacing: 1px;
+        }
+        
+        .print-date {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+        }
+        
+        .summary {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        
+        .summary-item {
+            text-align: center;
+        }
+        
+        .summary-item label {
+            font-weight: bold;
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .summary-item .value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        thead {
+            background-color: #572809;
+            color: white;
+        }
+        
+        th {
+            padding: 9px 11px;
+            text-align: left;
+            font-weight: bold;
+            font-size: 12px;
+            border: 1px solid #ddd;
+        }
+        
+        td {
+            padding: 9px 11px;
+            border: 1px solid #ddd;
+            font-size: 12px;
+        }
+        
+        tbody tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        
+        tbody tr:hover {
+            background-color: #f0f0f0;
+        }
+        
+        .text-center {
+            text-align: center;
+        }
+        
+        .text-right {
+            text-align: right;
+        }
+        
+        .totals-row {
+            background-color: #e8e8e8;
+            font-weight: bold;
+        }
+        
+        .currency {
+            text-align: right;
+        }
+        
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 11px;
+            color: #888;
+            border-top: 1px solid #ddd;
+            padding-top: 15px;
+        }
+        
+        .no-sales {
+            text-align: center;
+            padding: 30px;
+            color: #888;
+        }
+        
+        @media print {
+            body {
+                padding: 0;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            
+            .container {
+                max-width: 100%;
+            }
+            
+            .no-print {
+                display: none;
+            }
+            
+            table {
+                page-break-inside: auto;
+            }
+            
+            tr {
+                page-break-inside: avoid;
+            }
+
+            thead {
+                background-color: #572809 !important;
+                color: #fff !important;
+            }
+
+            th {
+                color: #fff !important;
+            }
+        }
+        
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
+            <h1>SALES REPORT</h1>
+            <p>Date: <strong>{{ selected_date|date:'l, F j, Y' }}</strong></p>
+            {% if selected_salesperson %}
+            <p>Sales Person: <strong>{{ selected_salesperson.get_full_name|default:selected_salesperson.username }}</strong></p>
+            {% endif %}
+            <div class="print-date">Generated on {{ now|date:'Y-m-d H:i' }}</div>
+        </div>
+        
+        {% if daily_sales %}
+            <div class="summary">
+                <div class="summary-item">
+                    <label>Total Sales</label>
+                    <div class="value">{{ total_sales_count }}</div>
+                </div>
+                <div class="summary-item">
+                    <label>Total Quantity</label>
+                    <div class="value">{{ total_quantity }}</div>
+                </div>
+                <div class="summary-item">
+                    <label>Total Revenue</label>
+                    <div class="value">₹{{ total_revenue|floatformat:2 }}</div>
+                </div>
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Product Name</th>
+                        <th class="text-center">Quantity</th>
+                        <th class="currency">Unit Price</th>
+                        <th class="currency">Total Price</th>
+                        <th>Recorded By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sale in daily_sales %}
+                    <tr>
+                        <td>{{ sale.product_name }}</td>
+                        <td class="text-center">{{ sale.quantity }}</td>
+                        <td class="currency">₹{{ sale.unit_price|floatformat:2 }}</td>
+                        <td class="currency">₹{{ sale.total_price|floatformat:2 }}</td>
+                        <td>{{ sale.recorded_by }}</td>
+                    </tr>
+                    {% endfor %}
+                    <tr class="totals-row">
+                        <td>TOTAL</td>
+                        <td class="text-center">{{ total_quantity }}</td>
+                        <td class="currency"></td>
+                        <td class="currency">₹{{ total_revenue|floatformat:2 }}</td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        {% else %}
+            <div class="no-sales">
+                <h3>No sales found for {{ selected_date|date:'l, F j, Y' }}</h3>
+            </div>
+        {% endif %}
+        
+        <div class="footer">
+            <p>This is a computer-generated document. For more information, please contact the sales department.</p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+

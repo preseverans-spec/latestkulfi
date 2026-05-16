@@ -1,0 +1,195 @@
+
+{% extends 'inventory/base.html' %}
+
+{% block title %}Daily Report - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-calendar-day"></i> Daily Report</h1>
+
+<div class="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Daily Report</h4>
+    <p>Date: {{ selected_date|date:'Y-m-d' }}</p>
+
+</div>
+
+<!-- Current Stock Taken for Date -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="alert alert-success text-center" role="alert" style="font-size: 1.15em;">
+            <strong>Current Stock Taken for {{ selected_date|date:'Y-m-d' }}:</strong>
+            <span style="font-weight: bold; color: #2c3e50;">{{ total_combined_stock_taken }}</span>
+        </div>
+        <div class="alert alert-info text-center" role="alert" style="font-size: 1.15em; margin-top: 10px;">
+            <strong>Total Stock as of {{ selected_date|date:'Y-m-d' }}:</strong>
+            <span style="font-weight: bold; color: #2c3e50;">{{ total_stock }}</span>
+        </div>
+    </div>
+</div>
+
+<style>
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .navbar, .sidebar, .btn-group, form, .btn {
+            display: none !important;
+        }
+
+        .print-header {
+            display: block !important;
+        }
+    }
+</style>
+
+<!-- Date Selector -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="d-flex gap-2 flex-wrap align-items-end justify-content-between">
+            <form method="GET" class="d-flex gap-2">
+                <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control" style="max-width: 150px;">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> View Report
+                </button>
+                <a href="{% url 'daily_report' %}" class="btn btn-outline-danger" title="Clear date filter">
+                    <i class="fas fa-eraser"></i> Clear
+                </a>
+            </form>
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fas fa-print"></i> Print
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{% url 'print_daily_report_html' %}?date={{ selected_date|date:'Y-m-d' }}" target="_blank">
+                        <i class="fas fa-file-alt"></i> Print (HTML)
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_daily_report_pdf' %}?date={{ selected_date|date:'Y-m-d' }}">
+                        <i class="fas fa-file-pdf"></i> Download PDF
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_daily_report_excel' %}?date={{ selected_date|date:'Y-m-d' }}">
+                        <i class="fas fa-file-excel"></i> Download Excel
+                    </a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Sales</h6>
+            <div class="stat-value">{{ total_transactions }}</div>
+            <small class="text-muted">transactions</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Revenue</h6>
+            <div class="stat-value">₹{{ total_revenue }}</div>
+            <small class="text-muted">sold</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Cost</h6>
+            <div class="stat-value">₹{{ total_cost|floatformat:2 }}</div>
+            <small class="text-muted">cost</small>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #27ae60;">
+            <h6>Gross Profit</h6>
+            <div class="stat-value" style="color: #27ae60;">₹{{ total_profit|floatformat:2 }}</div>
+            <small class="text-muted">before operations</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #f39c12;">
+            <h6>Operation Cost</h6>
+            <div class="stat-value" style="color: #f39c12;">₹{{ total_operation_cost|floatformat:2 }}</div>
+            <small class="text-muted">date-wise expenses</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #16a085;">
+            <h6>Net Profit</h6>
+            <div class="stat-value" style="color: #16a085;">₹{{ net_profit|floatformat:2 }}</div>
+            <small class="text-muted">after operations</small>
+        </div>
+    </div>
+</div>
+
+<!-- Sales Details Table -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-list"></i> Sales Details for {{ selected_date|date:'M d, Y' }}</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th>Unit Price</th>
+                    <th>Total Price</th>
+                    <th>Profit</th>
+                    <th>Recorded By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sale in sales %}
+                <tr>
+                    <td><strong>{{ sale.product_name }}</strong></td>
+                    <td>{{ sale.quantity }}</td>
+                    <td>₹{{ sale.unit_price|floatformat:2 }}</td>
+                    <td>₹{{ sale.revenue|floatformat:2 }}</td>
+                    <td><span class="badge bg-success">₹{{ sale.profit|floatformat:2 }}</span></td>
+                    <td>{{ sale.recorded_by }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">No sales recorded for this date</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+
+

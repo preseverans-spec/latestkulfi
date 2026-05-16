@@ -1,0 +1,202 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}View Expenses - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-calendar-alt"></i> View Expenses</h1>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="d-flex gap-2 flex-wrap align-items-end">
+            <div>
+                <label for="start_date" class="form-label">Start Date</label>
+                <input type="date" id="start_date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="form-control">
+            </div>
+            <div>
+                <label for="end_date" class="form-label">End Date</label>
+                <input type="date" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control">
+            </div>
+            <div>
+                <label for="details" class="form-label">Details of Operations</label>
+                <div class="input-group" id="exp-details-combo-wrapper" style="position:relative;">
+                    <input type="text" id="details" name="details" value="{{ details_filter }}" class="form-control" placeholder="e.g. Salesperson 1 Salary">
+                    <button class="btn btn-outline-secondary" type="button" id="exp-details-combo-btn" tabindex="-1" aria-label="Show options">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <ul class="list-group shadow" id="exp-details-combo-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:1055;max-height:220px;overflow-y:auto;">
+                        {% for option in expense_detail_options %}
+                        <li class="list-group-item list-group-item-action py-2 px-3 exp-details-combo-option" style="cursor:pointer;">{{ option }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> View Expenses
+                </button>
+            </div>
+            <div>
+                <a href="{% url 'expenses_history' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-eraser"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if not no_filter %}
+<div class="row mb-3">
+    <div class="col-md-4">
+        <div class="card stat-card">
+            <h6>Total Operation Cost</h6>
+            <div class="stat-value">₹{{ total_operation_cost|floatformat:2 }}</div>
+            <small class="text-muted">for selected range</small>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fas fa-list"></i> Operation Entries</h5>
+        {% if entries %}
+        {% with qs=request.GET.urlencode %}
+        <div class="btn-group" role="group">
+            <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-print"></i> Print
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="{% url 'print_expenses_html' %}{% if qs %}?{{ qs }}{% endif %}" target="_blank">
+                    <i class="fas fa-file-alt"></i> Print (HTML)
+                </a></li>
+                <li><a class="dropdown-item" href="{% url 'print_expenses_pdf' %}{% if qs %}?{{ qs }}{% endif %}">
+                    <i class="fas fa-file-pdf"></i> Download PDF
+                </a></li>
+                <li><a class="dropdown-item" href="{% url 'print_expenses_excel' %}{% if qs %}?{{ qs }}{% endif %}">
+                    <i class="fas fa-file-excel"></i> Download Excel
+                </a></li>
+                <li><a class="dropdown-item" href="{% url 'print_expenses_csv' %}{% if qs %}?{{ qs }}{% endif %}">
+                    <i class="fas fa-file-csv"></i> Download CSV
+                </a></li>
+            </ul>
+        </div>
+        {% endwith %}
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if no_filter %}
+        <div class="text-center py-5">
+            <i class="fas fa-calendar-alt fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Expenses</h4>
+            <p class="text-muted mb-0">Choose a start date, end date, and optional details of operations above, then click <strong>View Expenses</strong>.</p>
+        </div>
+        {% else %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Details of Operation</th>
+                    <th>Amount</th>
+                    <th>Recorded By</th>
+                    <th>Created At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in entries %}
+                <tr>
+                    <td>{{ item.operation_date|date:'Y-m-d' }}</td>
+                    <td>{{ item.details }}</td>
+                    <td>₹{{ item.amount|floatformat:2 }}</td>
+                    <td>{% if item.created_by %}{{ item.created_by.get_full_name|default:item.created_by.username }}{% else %}-{% endif %}</td>
+                    <td>{{ item.created_at|date:'Y-m-d H:i' }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No operation expenses found for the selected date range.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var input  = document.getElementById('details');
+    var btn    = document.getElementById('exp-details-combo-btn');
+    var list   = document.getElementById('exp-details-combo-list');
+    var items  = Array.from(document.querySelectorAll('.exp-details-combo-option'));
+    if (!input || !btn || !list) return;
+
+    function showList(filterText) {
+        var q = (filterText || '').toLowerCase();
+        var visible = 0;
+        items.forEach(function (li) {
+            var match = !q || li.textContent.toLowerCase().includes(q);
+            li.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+        list.style.display = visible ? 'block' : 'none';
+    }
+
+    function hideList() { list.style.display = 'none'; }
+
+    btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (list.style.display === 'none') { showList(''); input.focus(); } else { hideList(); }
+    });
+
+    input.addEventListener('input', function () { showList(this.value); });
+
+    items.forEach(function (li) {
+        li.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            input.value = li.textContent.trim();
+            hideList();
+            input.focus();
+        });
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!document.getElementById('exp-details-combo-wrapper').contains(e.target)) hideList();
+    });
+
+    input.addEventListener('keydown', function (e) {
+        var visible = items.filter(function (li) { return li.style.display !== 'none'; });
+        if (e.key === 'Escape') { hideList(); return; }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (list.style.display === 'none') showList('');
+            var focused = list.querySelector('.active');
+            var idx = focused ? visible.indexOf(focused) : -1;
+            if (focused) focused.classList.remove('active');
+            var next = visible[idx + 1] || visible[0];
+            if (next) { next.classList.add('active'); next.scrollIntoView({block:'nearest'}); }
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            var focused2 = list.querySelector('.active');
+            var idx2 = focused2 ? visible.indexOf(focused2) : visible.length;
+            if (focused2) focused2.classList.remove('active');
+            var prev = visible[idx2 - 1] || visible[visible.length - 1];
+            if (prev) { prev.classList.add('active'); prev.scrollIntoView({block:'nearest'}); }
+            return;
+        }
+        if (e.key === 'Enter') {
+            var focused3 = list.querySelector('.active');
+            if (focused3 && list.style.display !== 'none') {
+                e.preventDefault();
+                input.value = focused3.textContent.trim();
+                hideList();
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}

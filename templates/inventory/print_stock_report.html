@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Report - {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #333; font-size: 13px; }
+        .container { max-width: 1080px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #333; padding-bottom: 12px; }
+        .report-logo { width: 72px; height: 72px; object-fit: contain; margin: 0 auto 8px; display: block; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .summary { display: flex; gap: 10px; margin: 16px 0; }
+        .summary-item { flex: 1; background: #f5f5f5; border-radius: 4px; padding: 10px; text-align: center; }
+        .summary-item .label { font-size: 12px; color: #666; }
+        .summary-item .value { font-size: 18px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #ddd; padding: 8px 10px; font-size: 12px; }
+        thead { background: #572809; color: #fff; }
+        .no-print { text-align: right; margin-bottom: 12px; }
+        .no-print button { border: 0; background: #572809; color: #fff; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
+        .footer { margin-top: 16px; font-size: 11px; color: #888; text-align: center; }
+        @media print {
+            .no-print { display: none; }
+            body {
+                padding: 0;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            thead {
+                background: #572809 !important;
+                color: #fff !important;
+            }
+            th {
+                color: #fff !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="no-print"><button onclick="window.print()">Print this page</button></div>
+
+    <div class="header">
+        <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="report-logo">
+        <h1>STOCK REPORT</h1>
+        <p>Period: {{ start_date|date:'d M Y' }} to {{ end_date|date:'d M Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
+        <p>Mode: {% if report_mode == 'general' %}General{% else %}Detailed{% endif %}</p>
+        {% if include_positive_adjustments %}
+        <p>Includes positive adjustments</p>
+        {% endif %}
+    </div>
+
+    <div class="summary">
+        <div class="summary-item"><div class="label">Total Entries</div><div class="value">{{ total_entries }}</div></div>
+        <div class="summary-item"><div class="label">Total Qty In</div><div class="value">{{ total_quantity }}</div></div>
+        <div class="summary-item"><div class="label">Indian Kulfi Qty</div><div class="value">{{ indian_kulfi_quantity }}</div></div>
+        <div class="summary-item"><div class="label">Kulfi Corner Qty</div><div class="value">{{ kulfi_corner_quantity }}</div></div>
+        <div class="summary-item"><div class="label">Total Purchase Cost</div><div class="value">Rs.{{ total_purchase_cost|floatformat:2 }}</div></div>
+    </div>
+
+    {% if report_mode == 'general' %}
+    <table>
+        <thead>
+        <tr>
+            <th>Stock In Date</th>
+            <th>Total Packs</th>
+            <th>Total Quantity</th>
+            <th>Overall Cost Price</th>
+            <th>Manufacturer</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for row in general_rows %}
+        <tr>
+            <td>{{ row.movement_date|date:'Y-m-d' }}</td>
+            <td>{{ row.total_packs|floatformat:2 }}</td>
+            <td>{{ row.total_quantity }}</td>
+            <td>Rs.{{ row.overall_cost_price|floatformat:2 }}</td>
+            <td>{{ row.manufacturer }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" style="text-align:center;color:#777;">No stock entries found for this date range</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <table>
+        <thead>
+        <tr>
+            <th>Date</th>
+            <th>Manufacturer</th>
+            <th>Entry Type</th>
+            <th>SKU</th>
+            <th>Product</th>
+            <th>Qty In</th>
+            <th>Unit Cost</th>
+            <th>Total Cost</th>
+            <th>Recorded By</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for row in movement_rows %}
+        {% with movement=row.movement %}
+        <tr>
+            <td>{{ movement.movement_date|date:'Y-m-d' }}</td>
+            <td>{{ row.resolved_manufacturer }}</td>
+            <td>{{ row.entry_type }}</td>
+            <td>{{ movement.product.sku }}</td>
+            <td>{{ movement.product.name }}</td>
+            <td>{{ row.qty_in }}</td>
+            <td>Rs.{{ row.unit_cost|floatformat:2 }}</td>
+            <td>Rs.{{ row.total_cost|floatformat:2 }}</td>
+            <td>{% if movement.created_by %}{{ movement.created_by.get_full_name|default:movement.created_by.username }}{% else %}-{% endif %}</td>
+        </tr>
+        {% endwith %}
+        {% empty %}
+        <tr><td colspan="9" style="text-align:center;color:#777;">No stock entries found for this date range</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="footer">Computer-generated report.</div>
+</div>
+</body>
+</html>

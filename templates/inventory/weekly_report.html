@@ -1,0 +1,236 @@
+
+{% extends 'inventory/base.html' %}
+
+{% block title %}Weekly Report - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-calendar-week"></i> Weekly Report</h1>
+
+{% if not no_filter %}
+<div class="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Weekly Report</h4>
+    <p>Period: {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</p>
+</div>
+{% endif %}
+
+<style>
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .navbar, .sidebar, .btn-group, form, .btn {
+            display: none !important;
+        }
+
+        .print-header {
+            display: block !important;
+        }
+    }
+</style>
+
+<!-- Date Range Selector -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="d-flex gap-2 flex-wrap align-items-end justify-content-between">
+            <form method="GET" class="d-flex gap-2 flex-wrap">
+                <div>
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" id="start_date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="form-control">
+                </div>
+                <div>
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control">
+                </div>
+                <div>
+                    <label for="salesperson" class="form-label">Salesperson</label>
+                    <select id="salesperson" name="salesperson" class="form-control" style="min-width: 240px;">
+                        <option value="">All Salespersons</option>
+                        {% for sp in salespeople %}
+                        <option value="{{ sp.id }}" {% if selected_salesperson_id == sp.id|stringformat:'s' %}selected{% endif %}>
+                            {{ sp.get_full_name|default:sp.username }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-search"></i> View Weekly Report
+                    </button>
+                </div>
+                <div>
+                    <a href="{% url 'weekly_report' %}" class="btn btn-outline-secondary" title="Clear date filters">
+                        <i class="fas fa-eraser"></i> Clear
+                    </a>
+                </div>
+            </form>
+            {% if not no_filter %}
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fas fa-print"></i> Print
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" target="_blank">
+                        <i class="fas fa-file-alt"></i> Print (HTML)
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
+                        <i class="fas fa-file-pdf"></i> Download PDF
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
+                        <i class="fas fa-file-excel"></i> Download Excel
+                    </a></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        {% if selected_salesperson and not no_filter %}
+        <div class="mt-2">
+            <span class="badge bg-info text-dark">
+                Filtered by: {{ selected_salesperson.get_full_name|default:selected_salesperson.username }}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if no_filter %}
+<div class="card">
+    <div class="card-body">
+        <div class="text-center py-5">
+            <i class="fas fa-calendar-week fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Weekly Report</h4>
+            <p class="text-muted mb-0">Choose a start and end date above, then click <strong>View Weekly Report</strong> to see the weekly report.</p>
+        </div>
+    </div>
+</div>
+{% else %}
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Transactions</h6>
+            <div class="stat-value">{{ total_transactions }}</div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Revenue</h6>
+            <div class="stat-value">₹{{ total_revenue }}</div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Cost</h6>
+            <div class="stat-value">₹{{ total_cost|floatformat:2 }}</div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #27ae60;">
+            <h6>Total Profit</h6>
+            <div class="stat-value" style="color: #27ae60;">₹{{ total_profit|floatformat:2 }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Daily Breakdown -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-chart-bar"></i> Daily Breakdown</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Transactions</th>
+                    <th>Quantity Sold</th>
+                    <th>Revenue</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for date, data in daily_data.items %}
+                <tr>
+                    <td><strong>{{ date }}</strong></td>
+                    <td>{{ data.count }}</td>
+                    <td>{{ data.quantity|floatformat:0 }}</td>
+                    <td>₹{{ data.revenue }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Product-wise Breakdown -->
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-list"></i> Product-wise Breakdown</h5>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity Sold</th>
+                    <th>Unit Price</th>
+                    <th>Revenue</th>
+                    <th>Cost</th>
+                    <th>Profit</th>
+                    <th>Margin</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in weekly_product_breakdown %}
+                <tr>
+                    <td><strong>{{ item.product_name }}</strong></td>
+                    <td>{{ item.quantity }}</td>
+                    <td>₹{{ item.unit_price|floatformat:2 }}</td>
+                    <td>₹{{ item.revenue|floatformat:2 }}</td>
+                    <td>₹{{ item.cost|floatformat:2 }}</td>
+                    <td><span class="badge bg-success">₹{{ item.profit|floatformat:2 }}</span></td>
+                    <td>{{ item.margin|floatformat:2 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted">No sales found for this date range</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+
+

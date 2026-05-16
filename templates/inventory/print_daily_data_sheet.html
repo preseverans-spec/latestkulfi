@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Data Sheet - {{ selected_sales_date|date:'Y-m-d' }}</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #333; font-size: 13px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 18px; border-bottom: 2px solid #333; padding-bottom: 10px; }
+        .header h1 { margin: 0 0 6px; font-size: 24px; }
+        .meta { margin: 10px 0; }
+        .highlight { background: #f0f6ff; border-left: 4px solid #0d6efd; padding: 8px 10px; margin: 12px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #ddd; padding: 8px 10px; font-size: 12px; }
+        thead { background: #572809; color: #fff; }
+        .text-right { text-align: right; }
+        .no-print { text-align: right; margin-bottom: 12px; }
+        .no-print button { border: 0; background: #572809; color: #fff; width: 36px; height: 36px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+        .no-print button svg { display: block; }
+        .footer { margin-top: 16px; font-size: 11px; color: #888; text-align: center; }
+
+        @media print {
+            @page { size: A4 landscape; margin: 10mm; }
+            .no-print { display: none; }
+            body { padding: 0; }
+            thead { background: #572809 !important; color: #fff !important; }
+            th { color: #fff !important; }
+            tr { page-break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="no-print"><button id="printJpegBtn" title="Print as JPEG"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></div>
+
+    <div class="header">
+        <h1>DAILY DATA SHEET</h1>
+        <div class="meta">
+            Date: {{ selected_sales_date|date:'Y-m-d' }} |
+            Salesperson: {{ target_user.get_full_name|default:target_user.username }} |
+            Generated on {{ now|date:'Y-m-d H:i' }}
+        </div>
+    </div>
+
+    <div class="highlight">
+        <strong>Current Stock Taken for Date:</strong> {{ total_stock_taken_for_date }}
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Product Name</th>
+                <th>Avg Unit Price</th>
+                <th>Combined Stock</th>
+                <th>Stock Taken Count</th>
+                <th>Sales Count</th>
+                <th>Balance Count</th>
+                <th>Estimated Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>{{ product.name }}</td>
+                <td class="text-right">Rs.{{ product.avg_price|floatformat:2 }}</td>
+                <td class="text-right">{{ product.stock }}</td>
+                <td class="text-right">{{ product.stock_taken_count }}</td>
+                <td class="text-right">{{ product.sales_count }}</td>
+                <td class="text-right">{{ product.balance_count }}</td>
+                <td class="text-right">Rs.{{ product.estimated_total|floatformat:2 }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" style="text-align:center;color:#777;">No products available for this date.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="highlight" style="margin-top: 12px;">
+        <strong>Total Sales Count:</strong> {{ total_sales_count }}
+        &nbsp; | &nbsp;
+        <strong>Total Estimated Total:</strong> Rs.{{ total_estimated_total|floatformat:2 }}
+    </div>
+
+    <div class="footer">Computer-generated print view.</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+document.getElementById('printJpegBtn').addEventListener('click', function() {
+    var btn = document.getElementById('printJpegBtn');
+    btn.style.display = 'none';
+    html2canvas(document.body, { scale: 2, useCORS: true, backgroundColor: '#ffffff' }).then(function(canvas) {
+        btn.style.display = '';
+        var imgData = canvas.toDataURL('image/jpeg', 0.95);
+        var win = window.open('', '_blank');
+        win.document.write('<html><head><title>Print</title><style>body{margin:0;}img{max-width:100%;display:block;}</style></head><body><img src="' + imgData + '"></body></html>');
+        win.document.close();
+        win.focus();
+        win.onload = function() { win.print(); };
+    });
+});
+</script>
+</body>
+</html>

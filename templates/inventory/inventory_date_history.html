@@ -1,0 +1,249 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Inventory Date History - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-calendar-day"></i> Inventory Movement History by Date</h1>
+
+<div class="row mb-3">
+    <div class="col-12">
+        <form method="GET" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="start_date" class="form-label">Start Date</label>
+                <input type="date" id="start_date" name="start_date" class="form-control" value="{{ selected_start_date|date:'Y-m-d' }}" required>
+            </div>
+            <div>
+                <label for="end_date" class="form-label">End Date</label>
+                <input type="date" id="end_date" name="end_date" class="form-control" value="{{ selected_end_date|date:'Y-m-d' }}" required>
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> View Movements
+                </button>
+            </div>
+            <div>
+                <a href="{% url 'inventory_date_history' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-eraser"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if not date_selected %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="fas fa-calendar-alt fa-4x text-muted mb-3"></i>
+                <h4 class="text-muted">Select a Date Range to View Movements</h4>
+                <p class="text-muted">Choose a start and end date above, then click <strong>View Movements</strong> to see inventory activity.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Inventory Movements from {{ selected_start_date|date:'l, F j, Y' }} to {{ selected_end_date|date:'l, F j, Y' }}</h5>
+            </div>
+            <div class="card-body">
+                {% if daily_movements %}
+                    <!-- Summary Cards -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">{{ total_in }}</h5>
+                                    <p class="card-text">Stock In</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-danger text-white">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">{{ total_out }}</h5>
+                                    <p class="card-text">Stock Out</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-warning text-dark">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">{{ total_adjustment }}</h5>
+                                    <p class="card-text">Adjustments</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-info text-white">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">{{ total_movements }}</h5>
+                                    <p class="card-text">Total Movements</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Stock Snapshot -->
+                    <div class="row mb-3">
+                        <div class="col-md-4 mb-2">
+                            <div class="alert alert-primary py-2 mb-0">
+                                <strong>Stock as of {{ selected_end_date|date:'Y-m-d' }}:</strong> {{ total_stock_as_of_date }} units
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-2">
+                            <div class="alert alert-success py-2 mb-0">
+                                <strong>Total Stock Amount:</strong> ₹{{ total_stock_amount_as_of_date|floatformat:2 }}
+                            </div>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-sm">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Product</th>
+                                            <th>Stock as of Date</th>
+                                            <th>Stock Amount as of Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in stock_snapshot %}
+                                            <tr>
+                                                <td>{{ item.product.name }} ({{ item.product.sku }})</td>
+                                                <td>{{ item.stock }}</td>
+                                                <td>₹{{ item.stock_amount|floatformat:2 }}</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Movements Table -->
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Product</th>
+                                    <th>Type</th>
+                                    <th>Quantity</th>
+                                    <th>Reference</th>
+                                    <th>Notes</th>
+                                    <th>Created By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for movement in daily_movements %}
+                                <tr>
+                                    <td>{{ movement.movement_date|date:'Y-m-d' }}</td>
+                                    <td>{{ movement.created_at|time:'H:i:s' }}</td>
+                                    <td>
+                                        <strong>{{ movement.product.name }}</strong>
+                                        <br>
+                                        <small class="text-muted">SKU: {{ movement.product.sku }}</small>
+                                    </td>
+                                    <td>
+                                        {% if movement.movement_type == 'IN' %}
+                                            <span class="badge bg-success"><i class="fas fa-arrow-up"></i> Stock In</span>
+                                        {% elif movement.movement_type == 'OUT' %}
+                                            <span class="badge bg-danger"><i class="fas fa-arrow-down"></i> Stock Out</span>
+                                        {% else %}
+                                            <span class="badge bg-warning text-dark"><i class="fas fa-adjust"></i> Adjustment</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <strong>{{ movement.quantity }}</strong> units
+                                    </td>
+                                    <td>
+                                        {% if movement.reference_document %}
+                                            {{ movement.reference_document }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if movement.notes %}
+                                            {{ movement.notes }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if movement.created_by %}
+                                            {{ movement.created_by.get_full_name|default:movement.created_by.username }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                        <h4 class="text-muted">No Movements Found</h4>
+                        <p class="text-muted">There were no inventory movements between {{ selected_start_date|date:'l, F j, Y' }} and {{ selected_end_date|date:'l, F j, Y' }}</p>
+                        <a href="{% url 'inventory_date_history' %}" class="btn btn-primary mt-3">
+                            <i class="fas fa-arrow-left"></i> Back
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+
+<!-- Quick Actions -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <a href="{% url 'inventory_list' %}" class="btn btn-success w-100">
+                            <i class="fas fa-boxes"></i><br>
+                            <small>View Inventory</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-bolt"></i><br>
+                            <small>Quick Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'dashboard' %}" class="btn btn-success w-100">
+                            <i class="fas fa-home"></i><br>
+                            <small>Dashboard</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cart-plus"></i><br>
+                            <small>Quick Sales</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+
+

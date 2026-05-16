@@ -1,0 +1,162 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Sales History - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-history"></i> Sales History</h1>
+
+<!-- Date Range Filter -->
+<div class="row mb-3">
+    <div class="col-12">
+        <form method="GET" class="d-flex gap-2 flex-wrap align-items-end">
+            <div>
+                <label for="start_date" class="form-label">Start Date</label>
+                <input type="date" id="start_date" name="start_date" value="{{ start_date }}" class="form-control">
+            </div>
+            <div>
+                <label for="end_date" class="form-label">End Date</label>
+                <input type="date" id="end_date" name="end_date" value="{{ end_date }}" class="form-control">
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> View Sales
+                </button>
+            </div>
+            <div>
+                <a href="{% url 'sales_history' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-eraser"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if start_date or end_date %}
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="alert alert-success">
+            <h5 class="alert-heading"><i class="fas fa-calculator"></i> Sales Summary</h5>
+            <p class="mb-0">
+                <strong>Total Sales Value:</strong> ₹{{ total_sales_value|floatformat:2 }}
+                {% if start_date and end_date %}
+                    (from {{ start_date }} to {{ end_date }})
+                {% elif start_date %}
+                    (from {{ start_date }} onwards)
+                {% elif end_date %}
+                    (up to {{ end_date }})
+                {% endif %}
+            </p>
+            <p class="mb-0 mt-1">
+                <strong>Total Items Sold:</strong> {{ total_items_sold }} |
+                <strong>Total Transactions:</strong> {{ total_sales_count }}
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fas fa-list"></i> Sales History</h5>
+        <span class="badge bg-info">{{ total_items_sold }} items sold</span>
+    </div>
+    <div class="card-body">
+        {% if no_filter %}
+        <div class="text-center py-5">
+            <i class="fas fa-calendar-alt fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Sales History</h4>
+            <p class="text-muted">Choose a start and end date above, then click <strong>View Sales</strong> to see sales activity.</p>
+        </div>
+        {% else %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Product</th>
+                        <th>Quantity</th>
+                        <th>Unit Price</th>
+                        <th>Total Price</th>
+                        <th>Recorded By</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sale in sales %}
+                    <tr>
+                        <td>{{ sale.sale_date|date:'M d, Y' }}</td>
+                        <td>
+                            <strong>{{ sale.product_name }}</strong>
+                        </td>
+                        <td>{{ sale.quantity }}</td>
+                        <td>₹{{ sale.unit_price|floatformat:2 }}</td>
+                        <td><strong>₹{{ sale.total_price|floatformat:2 }}</strong></td>
+                        <td>{{ sale.recorded_by }}</td>
+                        <td>
+                            {% if sale.notes and sale.notes != '-' %}
+                                {{ sale.notes|truncatechars:80 }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">
+                            <i class="fas fa-shopping-cart fa-2x mb-2"></i>
+                            <br>No sales found
+                            {% if start_date or end_date %}
+                            for the selected date range
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+                <h5 class="mb-0" style="color: white !important;"><i class="fas fa-bolt" style="color: white !important;"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_sales_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-bolt"></i><br>
+                            <small>Quick Sales Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'quick_operations_entry' %}" class="btn btn-success w-100">
+                            <i class="fas fa-cogs"></i><br>
+                            <small>Quick Operations Entry</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'view_sales' %}" class="btn btn-success w-100">
+                            <i class="fas fa-calendar-day"></i><br>
+                            <small>View Sales by Date</small>
+                        </a>
+                    </div>
+                    <div class="col-md-3">
+                        <a href="{% url 'dashboard' %}" class="btn btn-success w-100">
+                            <i class="fas fa-home"></i><br>
+                            <small>Dashboard</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+

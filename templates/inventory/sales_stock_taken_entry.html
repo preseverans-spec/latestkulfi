@@ -1,0 +1,220 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Sales Stock Taken - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-clipboard-list"></i> Sales Stock Taken</h1>
+
+<form method="POST" id="stock-taken-form">
+    {% csrf_token %}
+
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label for="sales_date" class="form-label">Sales Stock Taken Date</label>
+            <input type="date" id="sales_date" name="sales_date" class="form-control" value="{{ selected_sales_date|date:'Y-m-d' }}" required>
+            <small class="text-muted">This record does not reduce inventory stock.</small>
+        </div>
+        {% if user.is_staff %}
+        <div class="col-md-4">
+            <label for="salesperson" class="form-label">Salesperson</label>
+            <select id="salesperson" name="salesperson" class="form-control">
+                <option value="">My Records ({{ user.get_full_name|default:user.username }})</option>
+                {% for sp in salespeople %}
+                <option value="{{ sp.id }}" {% if selected_salesperson_id == sp.id|stringformat:'s' %}selected{% endif %}>
+                    {{ sp.get_full_name|default:sp.username }}
+                </option>
+                {% endfor %}
+            </select>
+            <small class="text-muted">Select a user to view or update their stock-taken records.</small>
+        </div>
+        {% endif %}
+        <div class="col-md-8 d-flex align-items-end justify-content-end">
+            <a href="{% if user.is_staff %}{% url 'dashboard' %}{% else %}{% url 'quick_sales_entry' %}{% endif %}" class="btn btn-outline-secondary btn-lg me-2"
+               onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
+                <i class="fas fa-arrow-left"></i> Cancel
+            </a>
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="fas fa-save"></i> Save Stock Taken
+            </button>
+        </div>
+    </div>
+
+    <div class="alert alert-light border mb-3">
+        <strong>Editing records for:</strong> {{ target_user.get_full_name|default:target_user.username }}
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Products List</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Product Name</th>
+                            <th>Avg. Unit Price</th>
+                            <th>Combined Stock</th>
+                            <th>Stock Taken Count</th>
+                            <th>Estimated Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>
+                                {{ product.name }}
+                                <input type="hidden" name="product_key[]" value="{{ product.key }}">
+                            </td>
+                            <td>
+                                <span class="unit-price">₹{{ product.avg_price|floatformat:2 }}</span>
+                                <input type="hidden" class="unit-price-value" value="{{ product.avg_price }}">
+                            </td>
+                            <td>{{ product.stock }}</td>
+                            <td>
+                                <input type="number" name="stock_taken_count[]" min="0" value="{{ product.stock_taken_count }}" class="form-control quantity-input" style="max-width: 140px;">
+                            </td>
+                            <td>
+                                <span class="total-price">₹{{ product.estimated_total|floatformat:2 }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <div class="alert alert-info py-2 mb-0">
+                            <strong>Total Stock Taken:</strong> <span id="summary-total-taken">{{ total_taken_count }}</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-success py-2 mb-0">
+                            <strong>Total Combined Stock (Live):</strong> <span id="summary-total-combined">{{ total_combined_stock }}</span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="alert alert-warning py-2 mb-0">
+                            <strong>Total Estimated Value:</strong> ₹<span id="summary-total-estimated">{{ total_estimated_value|floatformat:2 }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</form>
+
+{% if user.is_staff %}
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="mb-0">All Salespersons Entries ({{ selected_sales_date|date:'Y-m-d' }})</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Salesperson</th>
+                        <th>Product</th>
+                        <th>Stock Taken</th>
+                        <th>Estimated Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in admin_day_entries %}
+                    <tr>
+                        <td>{{ entry.salesperson.get_full_name|default:entry.salesperson.username }}</td>
+                        <td>{{ entry.display_product_name|default:entry.product_name }}</td>
+                        <td>{{ entry.stock_taken_count }}</td>
+                        <td>₹{{ entry.estimated_total|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted">No stock-taken entries found for this date.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const salesDateInput = document.getElementById('sales_date');
+    const salespersonInput = document.getElementById('salesperson');
+
+    function reloadWithFilters() {
+        const dateValue = salesDateInput.value;
+        const url = new URL(window.location.href);
+        url.searchParams.set('sales_date', dateValue);
+        if (salespersonInput && salespersonInput.value) {
+            url.searchParams.set('salesperson', salespersonInput.value);
+        } else {
+            url.searchParams.delete('salesperson');
+        }
+        window.location.href = url.toString();
+    }
+
+    salesDateInput.addEventListener('change', reloadWithFilters);
+    if (salespersonInput) {
+        salespersonInput.addEventListener('change', reloadWithFilters);
+    }
+
+    document.querySelectorAll('.quantity-input').forEach(function(quantityInput) {
+        const row = quantityInput.closest('tr');
+        const unitPrice = parseFloat(row.querySelector('.unit-price-value').value || 0);
+        const totalPriceLabel = row.querySelector('.total-price');
+
+        function updateTotal() {
+            let qty = parseFloat(quantityInput.value);
+            if (isNaN(qty) || qty < 0) {
+                qty = 0;
+                quantityInput.value = 0;
+            }
+            const total = (unitPrice * qty).toFixed(2);
+            totalPriceLabel.textContent = '₹' + total;
+            updateSummary();
+        }
+
+        quantityInput.addEventListener('focus', function() {
+            if (quantityInput.value === '0') {
+                quantityInput.value = '';
+            }
+        });
+
+        quantityInput.addEventListener('blur', function() {
+            if (quantityInput.value === '') {
+                quantityInput.value = '0';
+            }
+            updateTotal();
+        });
+
+        quantityInput.addEventListener('input', updateTotal);
+        updateTotal();
+    });
+
+    function updateSummary() {
+        let totalTaken = 0;
+        let totalEstimated = 0;
+
+        document.querySelectorAll('tbody tr').forEach(function(row) {
+            const quantity = parseInt(row.querySelector('.quantity-input').value, 10) || 0;
+            const rowPrice = parseFloat(row.querySelector('.total-price').textContent.replace('₹', '')) || 0;
+            totalTaken += quantity;
+            totalEstimated += rowPrice;
+        });
+
+        document.getElementById('summary-total-taken').textContent = totalTaken;
+        document.getElementById('summary-total-estimated').textContent = totalEstimated.toFixed(2);
+    }
+
+    updateSummary();
+});
+</script>
+
+{% endblock %}

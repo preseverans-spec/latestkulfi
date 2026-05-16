@@ -1,0 +1,256 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Quick Operations Entry - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-bolt"></i> Quick Operations Entry</h1>
+
+<div class="row mb-4">
+    <div class="col-lg-4 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    {% if edit_expense %}
+                        <i class="fas fa-edit"></i> Edit Operation Expense
+                    {% else %}
+                        <i class="fas fa-plus-circle"></i> Add Operation Expense
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" class="row g-3">
+                    {% csrf_token %}
+                    {% if edit_expense %}
+                    <input type="hidden" name="expense_id" value="{{ edit_expense.id }}">
+                    {% endif %}
+                    <div class="col-12">
+                        <label class="form-label" for="id_operation_date">Date</label>
+                        {{ form.operation_date }}
+                        {% if form.operation_date.errors %}<div class="text-danger small mt-1">{{ form.operation_date.errors|join:', ' }}</div>{% endif %}
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="id_details">Details of Operation</label>
+                        <div class="input-group" id="details-combo-wrapper">
+                            {{ form.details }}
+                            <button class="btn btn-outline-secondary" type="button" id="details-combo-btn" tabindex="-1" aria-label="Show options">
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <ul class="list-group shadow" id="details-combo-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:1055;max-height:220px;overflow-y:auto;">
+                                {% for option in expense_detail_options %}
+                                <li class="list-group-item list-group-item-action py-2 px-3 details-combo-option" style="cursor:pointer;">{{ option }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% if form.details.errors %}<div class="text-danger small mt-1">{{ form.details.errors|join:', ' }}</div>{% endif %}
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="id_amount">Amount</label>
+                        {{ form.amount }}
+                        {% if form.amount.errors %}<div class="text-danger small mt-1">{{ form.amount.errors|join:', ' }}</div>{% endif %}
+                    </div>
+                    <div class="col-12 d-grid">
+                        {% if edit_expense %}
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary flex-fill">
+                                <i class="fas fa-save"></i> Update Operation Cost
+                            </button>
+                            <a href="{% url 'quick_operations_entry' %}?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                        </div>
+                        {% else %}
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Save Operation Cost
+                        </button>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8 mb-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <h5 class="mb-0"><i class="fas fa-calendar-day"></i> Daily Operations Summary</h5>
+                    <a href="{% url 'quick_income_entry' %}?date={{ selected_date|date:'Y-m-d' }}" class="btn btn-outline-success btn-sm" title="Open Quick Income Entry">
+                        <i class="fas fa-coins"></i> Income
+                    </a>
+                    <a href="{% url 'quick_operations_entry' %}?date={{ previous_date|date:'Y-m-d' }}" class="btn btn-outline-secondary btn-sm" title="Previous day">
+                        <i class="fas fa-chevron-left"></i>
+                    </a>
+                    <span class="badge bg-light text-dark border px-3 py-2">{{ selected_date|date:'Y-m-d' }}</span>
+                    <a href="{% url 'quick_operations_entry' %}?date={{ next_date|date:'Y-m-d' }}" class="btn btn-outline-secondary btn-sm" title="Next day">
+                        <i class="fas fa-chevron-right"></i>
+                    </a>
+                </div>
+                <form method="GET" class="d-flex gap-2 align-items-center mb-0">
+                    <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control form-control-sm" style="min-width: 160px;">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm">View</button>
+                </form>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-6 col-md-3">
+                        <div class="alert py-1 mb-0 text-center text-white border-0" style="min-width:0;background:linear-gradient(135deg,#1d3557 0%,#274c77 100%);">
+                            <div class="text-white text-truncate" style="font-size:0.7rem;opacity:0.9;">Sales</div>
+                            <div class="fw-bold text-nowrap overflow-hidden" style="font-size:0.8rem;">₹{{ day_revenue|floatformat:0 }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="alert py-1 mb-0 text-center text-white border-0" style="min-width:0;background:linear-gradient(135deg,#264653 0%,#2f6f73 100%);">
+                            <div class="text-white text-truncate" style="font-size:0.7rem;opacity:0.9;">Oth Inc</div>
+                            <div class="fw-bold text-nowrap overflow-hidden" style="font-size:0.8rem;">₹{{ day_operation_income|floatformat:0 }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="alert py-1 mb-0 text-center text-white border-0" style="min-width:0;background:linear-gradient(135deg,#7f5539 0%,#9c6644 100%);">
+                            <div class="text-white text-truncate" style="font-size:0.7rem;opacity:0.9;">Opr Cost</div>
+                            <div class="fw-bold text-nowrap overflow-hidden" style="font-size:0.8rem;">₹{{ total_day_operation_cost|floatformat:0 }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="alert py-1 mb-0 text-center text-white border-0" style="min-width:0;background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);">
+                            <div class="d-flex align-items-center justify-content-start gap-1 text-start" style="min-width:0;">
+                                <div class="text-white text-truncate" style="font-size:0.7rem;opacity:0.9;">Net Aft Ops</div>
+                                <div class="fw-bold text-nowrap overflow-hidden" style="font-size:0.8rem;">₹{{ day_net_after_operations|floatformat:0 }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 20%;">Date</th>
+                                <th>Details of Operation</th>
+                                <th style="width: 20%;">Amount</th>
+                                <th style="width: 25%;">Recorded By</th>
+                                <th style="width: 12%;" class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in operations_entries %}
+                            <tr>
+                                <td>{{ item.operation_date|date:'Y-m-d' }}</td>
+                                <td>{{ item.details }}</td>
+                                <td>₹{{ item.amount|floatformat:2 }}</td>
+                                <td>{% if item.created_by %}{{ item.created_by.get_full_name|default:item.created_by.username }}{% else %}-{% endif %}</td>
+                                <td class="text-center">
+                                    <a href="{% url 'quick_operations_entry' %}?date={{ selected_date|date:'Y-m-d' }}&edit={{ item.id }}" class="btn btn-sm btn-outline-primary" title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <form method="POST" action="{% url 'delete_operations_expense' item.id %}" class="d-inline" onsubmit="return confirm('Delete this operation entry?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">No operation expenses recorded for this date.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var input  = document.getElementById('id_details');
+    var btn    = document.getElementById('details-combo-btn');
+    var list   = document.getElementById('details-combo-list');
+    var items  = Array.from(document.querySelectorAll('.details-combo-option'));
+    if (!input || !btn || !list) return;
+
+    document.getElementById('details-combo-wrapper').style.position = 'relative';
+
+    function showList(filterText) {
+        var q = (filterText || '').toLowerCase();
+        var visible = 0;
+        items.forEach(function (li) {
+            var match = !q || li.textContent.toLowerCase().includes(q);
+            li.style.display = match ? '' : 'none';
+            if (match) visible++;
+        });
+        list.style.display = visible ? 'block' : 'none';
+    }
+
+    function hideList() {
+        list.style.display = 'none';
+    }
+
+    btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (list.style.display === 'none') {
+            showList('');
+            input.focus();
+        } else {
+            hideList();
+        }
+    });
+
+    input.addEventListener('input', function () {
+        showList(this.value);
+    });
+
+    items.forEach(function (li) {
+        li.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            input.value = li.textContent.trim();
+            hideList();
+            input.focus();
+        });
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!document.getElementById('details-combo-wrapper').contains(e.target)) {
+            hideList();
+        }
+    });
+
+    input.addEventListener('keydown', function (e) {
+        var visible = items.filter(function (li) { return li.style.display !== 'none'; });
+        if (e.key === 'Escape') { hideList(); return; }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (list.style.display === 'none') showList('');
+            var focused = list.querySelector('.active');
+            var idx = focused ? visible.indexOf(focused) : -1;
+            if (focused) focused.classList.remove('active');
+            var next = visible[idx + 1] || visible[0];
+            if (next) { next.classList.add('active'); next.scrollIntoView({block:'nearest'}); }
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            var focused2 = list.querySelector('.active');
+            var idx2 = focused2 ? visible.indexOf(focused2) : visible.length;
+            if (focused2) focused2.classList.remove('active');
+            var prev = visible[idx2 - 1] || visible[visible.length - 1];
+            if (prev) { prev.classList.add('active'); prev.scrollIntoView({block:'nearest'}); }
+            return;
+        }
+        if (e.key === 'Enter') {
+            var focused3 = list.querySelector('.active');
+            if (focused3 && list.style.display !== 'none') {
+                e.preventDefault();
+                input.value = focused3.textContent.trim();
+                hideList();
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}

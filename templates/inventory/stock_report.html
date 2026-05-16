@@ -1,0 +1,255 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Stock Report - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-boxes"></i> Stock Report</h1>
+
+{% if not no_filter %}
+<div class="print-header">
+    <img src="{{ STATIC_URL }}logo/logo.svg" alt="Logo" onerror="this.onerror=null;this.src='{{ STATIC_URL }}logo/logo.png';" class="print-logo">
+    <h4>Stock Report</h4>
+    <p>Range: {{ start_date|date:'Y-m-d' }} to {{ end_date|date:'Y-m-d' }}</p>
+</div>
+{% endif %}
+
+<style>
+    .print-header {
+        display: block;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 10px;
+        text-align: center;
+    }
+
+    .print-header h4 { margin: 0 0 4px; font-size: 18px; color: #572809; }
+    .print-header p { margin: 0; font-size: 12px; color: #555; }
+
+    .print-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        margin: 0 auto 8px;
+        display: block;
+    }
+
+    @media print {
+        body {
+            background: white;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .navbar, .sidebar, form, .btn {
+            display: none !important;
+        }
+
+        .print-header {
+            display: block !important;
+        }
+    }
+</style>
+
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="d-flex gap-2 flex-wrap align-items-end justify-content-between">
+            <form method="GET" class="d-flex gap-2 flex-wrap align-items-end">
+                <div>
+                    <label class="form-label mb-1" for="start_date">Start Date</label>
+                    <input type="date" id="start_date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="form-control">
+                </div>
+                <div>
+                    <label class="form-label mb-1" for="end_date">End Date</label>
+                    <input type="date" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control">
+                </div>
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" value="1" id="include_adjustments" name="include_adjustments" {% if include_positive_adjustments %}checked{% endif %}>
+                    <label class="form-check-label" for="include_adjustments">
+                        Include Positive Adjustments
+                    </label>
+                </div>
+                <button type="submit" name="view_mode" value="general" class="btn {% if report_mode == 'general' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    <i class="fas fa-chart-bar"></i> View General Report
+                </button>
+                <button type="submit" name="view_mode" value="detailed" class="btn {% if report_mode == 'detailed' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+                    <i class="fas fa-list"></i> View Detailed Report
+                </button>
+                <a href="{% url 'stock_report' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-eraser"></i> Clear
+                </a>
+            </form>
+            {% if not no_filter %}
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="fas fa-print"></i> Print
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}" target="_blank">
+                        <i class="fas fa-file-alt"></i> Print (HTML)
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
+                        <i class="fas fa-file-pdf"></i> Download PDF
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
+                        <i class="fas fa-file-excel"></i> Download Excel
+                    </a></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if no_filter %}
+<div class="card">
+    <div class="card-body">
+        <div class="text-center py-5">
+            <i class="fas fa-boxes fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">Select a Date Range to View Stock Report</h4>
+            <p class="text-muted mb-0">Choose a start and end date above, then select <strong>View General Report</strong> or <strong>View Detailed Report</strong> to see stock data.</p>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Entries</h6>
+            <div class="stat-value">{{ total_entries }}</div>
+            <small class="text-muted">stock rows in report</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Qty In</h6>
+            <div class="stat-value">{{ total_quantity }}</div>
+            <small class="text-muted">units entered</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #27ae60;">
+            <h6>Indian Kulfi Qty</h6>
+            <div class="stat-value" style="color: #27ae60;">{{ indian_kulfi_quantity }}</div>
+            <small class="text-muted">units entered</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #3498db;">
+            <h6>Kulfi Corner Qty</h6>
+            <div class="stat-value" style="color: #3498db;">{{ kulfi_corner_quantity }}</div>
+            <small class="text-muted">units entered</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card" style="border-left-color: #8e44ad;">
+            <h6>Total Purchase Cost</h6>
+            <div class="stat-value" style="color: #8e44ad;">₹{{ total_purchase_cost|floatformat:2 }}</div>
+            <small class="text-muted">overall stock purchase value</small>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">
+            {% if report_mode == 'general' %}
+                <i class="fas fa-chart-bar"></i> General Stock Report
+            {% else %}
+                <i class="fas fa-list"></i> Detailed Stock Report
+            {% endif %}
+            {% if include_positive_adjustments %} (Including Positive Adjustments){% endif %}
+        </h5>
+    </div>
+    <div class="table-responsive">
+        {% if report_mode == 'general' %}
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Stock In Date</th>
+                    <th>Total Packs</th>
+                    <th>Total Quantity</th>
+                    <th>Overall Cost Price</th>
+                    <th>Manufacturer</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in general_rows %}
+                <tr>
+                    <td>{{ row.movement_date|date:'Y-m-d' }}</td>
+                    <td>{{ row.total_packs|floatformat:2 }}</td>
+                    <td>{{ row.total_quantity }}</td>
+                    <td>₹{{ row.overall_cost_price|floatformat:2 }}</td>
+                    <td>
+                        <span class="badge {% if row.manufacturer == 'Indian Kulfi' %}bg-success{% else %}bg-info text-dark{% endif %}">
+                            {{ row.manufacturer }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No stock entries found for the selected date range</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Manufacturer</th>
+                    <th>Entry Type</th>
+                    <th>SKU</th>
+                    <th>Product</th>
+                    <th>Quantity In</th>
+                    <th>Unit Cost</th>
+                    <th>Total Cost</th>
+                    <th>Reference</th>
+                    <th>Recorded By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in movement_rows %}
+                {% with movement=row.movement %}
+                <tr>
+                    <td>{{ movement.movement_date|date:'Y-m-d' }}</td>
+                    <td>
+                        <span class="badge {% if row.resolved_manufacturer == 'Indian Kulfi' %}bg-success{% else %}bg-info text-dark{% endif %}">
+                            {{ row.resolved_manufacturer }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge {% if row.entry_type == 'Stock In' %}bg-primary{% else %}bg-warning text-dark{% endif %}">
+                            {{ row.entry_type }}
+                        </span>
+                    </td>
+                    <td>{{ movement.product.sku }}</td>
+                    <td><strong>{{ movement.product.name }}</strong></td>
+                    <td>{{ row.qty_in }}</td>
+                    <td>₹{{ row.unit_cost|floatformat:2 }}</td>
+                    <td>₹{{ row.total_cost|floatformat:2 }}</td>
+                    <td>{{ movement.reference_document|default:'-' }}</td>
+                    <td>{% if movement.created_by %}{{ movement.created_by.get_full_name|default:movement.created_by.username }}{% else %}-{% endif %}</td>
+                </tr>
+                {% endwith %}
+                {% empty %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted">No stock entries found for the selected date range</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
