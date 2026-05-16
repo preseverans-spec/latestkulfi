@@ -82,6 +82,29 @@ The **Kulfi Inventory & Sales Management System** is a robust, web-based and mob
 * **Environment Configuration:** Uses `python-dotenv` for local `.env` and host environment variables (e.g., `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_HOSTS`).
 * **Security:** Configured for production-level HTTPS redirection, secure cookies, and HSTS when `DEBUG=False`.
 
+### 6.1 One-Time Render Data Seed (Optional)
+Use this only when you need to copy local dataset into a fresh Render PostgreSQL database.
+
+Full runbook: [DATA_MIGRATION_CHECKLIST.md](DATA_MIGRATION_CHECKLIST.md).
+
+1. Add the fixture file render_seed.json to the repo for one deploy.
+2. In Render environment variables, set SEED_DATA_ON_DEPLOY=True.
+3. Ensure SEED_FIXTURE_PATH=render_seed.json.
+4. Deploy once.
+5. The build pipeline runs migrate, then load_seed_once.
+6. Seed import runs only when:
+   - SEED_DATA_ON_DEPLOY is enabled.
+   - The fixture file exists.
+   - Product data is not already present.
+7. After successful seed:
+   - Set SEED_DATA_ON_DEPLOY=False.
+   - Remove render_seed.json from the repo.
+   - Deploy again.
+
+Notes:
+- This prevents accidental re-import on every deploy.
+- Existing non-empty databases are protected by the command guard.
+
 ---
 
 ### 7. Future Enhancements (Roadmap)

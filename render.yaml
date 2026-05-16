@@ -9,7 +9,7 @@ services:
     name: indian-kulfi
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python manage.py migrate && python manage.py import_sqlite_database && python manage.py collectstatic --noinput && python manage.py create_default_superuser
+    buildCommand: pip install -r requirements.txt && python manage.py migrate && python manage.py import_sqlite_database && python manage.py load_seed_once && python manage.py collectstatic --noinput && python manage.py create_default_superuser
     startCommand: gunicorn kulfi_config.wsgi --log-file -
     envVars:
       - key: DEBUG
@@ -36,3 +36,7 @@ services:
         value: preseverans@gmail.com
       - key: ADMIN_PASSWORD
         sync: false
+      - key: SEED_DATA_ON_DEPLOY
+        value: "False"
+      - key: SEED_FIXTURE_PATH
+        value: render_seed.json

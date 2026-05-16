@@ -5,6 +5,7 @@ Django settings for kulfi project.
 from pathlib import Path
 import os
 import dj_database_url
+from urllib.parse import urlparse
 from django.core.management.utils import get_random_secret_key
 from datetime import timedelta
 
@@ -107,7 +108,13 @@ WSGI_APPLICATION = 'kulfi_config.wsgi.application'
 DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
     db_url_lower = DATABASE_URL.strip().lower()
-    ssl_required_for_db = db_url_lower.startswith('postgres://') or db_url_lower.startswith('postgresql://')
+    parsed_db_url = urlparse(DATABASE_URL)
+    is_postgres = db_url_lower.startswith('postgres://') or db_url_lower.startswith('postgresql://')
+    is_local_host = parsed_db_url.hostname in ('localhost', '127.0.0.1')
+    ssl_required_for_db = _as_bool(
+        os.getenv('DB_SSL_REQUIRE'),
+        default=is_postgres and not is_local_host,
+    )
     DATABASES = {
         'default': dj_database_url.config(
             default=DATABASE_URL,
