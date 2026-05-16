@@ -3,3 +3,14 @@
 2026-05-16 16:03:02.742 +10 [12252] LOG:  listening on IPv4 address "127.0.0.1", port 5433
 2026-05-16 16:03:02.800 +10 [15156] LOG:  database system was shut down at 2026-05-16 16:02:54 +10
 2026-05-16 16:03:02.807 +10 [12252] LOG:  database system is ready to accept connections
+2026-05-16 16:03:04.938 +10 [11892] FATAL:  role "DELL" does not exist
+2026-05-16 16:03:08.670 +10 [6968] ERROR:  syntax error at or near "\" at character 108
+2026-05-16 16:03:08.670 +10 [6968] STATEMENT:  SELECT 'CREATE DATABASE kulfi_local' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='kulfi_local')\gexec
+2026-05-16 16:05:09.848 +10 [20448] FATAL:  role "DELL" does not exist
+2026-05-16 16:05:13.679 +10 [6168] ERROR:  syntax error at or near "\" at character 108
+2026-05-16 16:05:13.679 +10 [6168] STATEMENT:  SELECT 'CREATE DATABASE kulfi_local' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='kulfi_local')\gexec
+2026-05-16 16:06:39.436 +10 [14024] FATAL:  role "DELL" does not exist
+2026-05-16 16:08:02.795 +10 [16148] LOG:  checkpoint starting: time
+2026-05-16 16:10:21.234 +10 [16148] LOG:  checkpoint complete: wrote 1305 buffers (8.0%), wrote 3 SLRU buffers; 1 WAL file(s) added, 0 removed, 0 recycled; write=137.842 s, sync=0.495 s, total=138.440 s; sync files=613, longest=0.003 s, average=0.001 s; distance=7825 kB, estimate=7825 kB; lsn=0/1F95AE8, redo lsn=0/1F95A58
+2026-05-16 16:13:02.249 +10 [16148] LOG:  checkpoint starting: time
+2026-05-16 16:13:03.751 +10 [16148] LOG:  checkpoint complete: wrote 14 buffers (0.1%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.480 s, sync=0.010 s, total=1.503 s; sync files=5, longest=0.006 s, average=0.002 s; distance=80 kB, estimate=7051 kB; lsn=0/1FA9CA8, redo lsn=0/1FA9C50
