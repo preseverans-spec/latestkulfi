@@ -406,6 +406,118 @@ class SyncApiTests(TestCase):
 			[('COCONUT', 20), ('ELAICHI', 29), ('GUAVA', 13)],
 		)
 
+	def test_quick_inventory_entry_groups_manufacturer_prefixed_products(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		movement_date = timezone.datetime(2026, 4, 19).date()
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+
+		Product.objects.create(
+			name='IK0001 Malai',
+			sku='IK-501',
+			category='Kulfi',
+			cost_price=Decimal('12.00'),
+			selling_price=Decimal('20.00'),
+			current_stock=11,
+			reorder_level=2,
+			is_active=True,
+		)
+		Product.objects.create(
+			name='NB013 Malai',
+			sku='IK-502',
+			category='Kulfi Corner',
+			cost_price=Decimal('14.00'),
+			selling_price=Decimal('22.00'),
+			current_stock=7,
+			reorder_level=2,
+			is_active=True,
+		)
+
+		response = client.get(reverse('quick_inventory_entry'), {'movement_date': movement_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		malai_groups = [group for group in response.context['product_groups'] if group['name'] == 'Malai']
+		self.assertEqual(len(malai_groups), 1)
+		self.assertEqual(malai_groups[0]['ik_stock'], 11)
+		self.assertEqual(malai_groups[0]['kc_stock'], 7)
+		self.assertIsNotNone(malai_groups[0]['ik'])
+		self.assertIsNotNone(malai_groups[0]['kc'])
+
+	def test_quick_inventory_entry_sums_same_manufacturer_variants(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		movement_date = timezone.datetime(2026, 4, 20).date()
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+
+		Product.objects.create(
+			name='Malai',
+			sku='IK0001',
+			category='Indian Kulfi',
+			cost_price=Decimal('24.17'),
+			selling_price=Decimal('40.00'),
+			current_stock=59,
+			reorder_level=6,
+			is_active=True,
+		)
+		Product.objects.create(
+			name='NB013 Malai',
+			sku='NB013',
+			category='Indian Kulfi',
+			cost_price=Decimal('24.17'),
+			selling_price=Decimal('40.00'),
+			current_stock=0,
+			reorder_level=6,
+			is_active=True,
+		)
+
+		response = client.get(reverse('quick_inventory_entry'), {'movement_date': movement_date.isoformat()})
+
+		self.assertEqual(response.status_code, 200)
+		malai_groups = [group for group in response.context['product_groups'] if group['name'] == 'Malai']
+		self.assertEqual(len(malai_groups), 1)
+		self.assertEqual(malai_groups[0]['ik_stock'], 59)
+		self.assertEqual(malai_groups[0]['total_stock'], 59)
+		self.assertEqual(malai_groups[0]['ik'].sku, 'IK0001')
+
+	def test_inventory_list_groups_manufacturer_prefixed_products(self):
+		client = Client()
+		client.force_login(self.admin_user)
+		self.product.is_active = False
+		self.product.save(update_fields=['is_active'])
+
+		Product.objects.create(
+			name='Malai',
+			sku='IK0001',
+			category='Indian Kulfi',
+			cost_price=Decimal('24.17'),
+			selling_price=Decimal('40.00'),
+			current_stock=59,
+			reorder_level=6,
+			is_active=True,
+		)
+		Product.objects.create(
+			name='NB013 Malai',
+			sku='NB013',
+			category='Indian Kulfi',
+			cost_price=Decimal('24.17'),
+			selling_price=Decimal('40.00'),
+			current_stock=0,
+			reorder_level=6,
+			is_active=True,
+		)
+
+		response = client.get(reverse('inventory_list'))
+
+		self.assertEqual(response.status_code, 200)
+		products = list(response.context['products'])
+		self.assertEqual(len(products), 1)
+		self.assertEqual(products[0]['name'], 'Malai')
+		self.assertEqual(products[0]['stock'], 59)
+		self.assertEqual(products[0]['reorder_level'], 6)
+		self.assertEqual(products[0]['selling_price'], Decimal('40.00'))
+
 	def test_inventory_list_keeps_historical_zero_stock_in_rows(self):
 		client = Client()
 		client.force_login(self.admin_user)
@@ -439,7 +551,7 @@ class SyncApiTests(TestCase):
 		content = response.content.decode()
 		self.assertRegex(
 			content,
-			re.compile(r'Historic Zero Test</strong></td>\s*<td>IK-401</td>\s*<td>Indian Kulfi</td>\s*<td>0</td>', re.S),
+			re.compile(r'Historic Zero Test</strong></td>\s*<td>0</td>\s*<td>2</td>\s*<td>₹20\.00</td>', re.S),
 		)
 
 	def test_view_sales_sort_treats_elachi_as_elaichi(self):

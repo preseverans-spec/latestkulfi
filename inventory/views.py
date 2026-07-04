@@ -71,8 +71,8 @@ import os
 import re
 from collections import OrderedDict, defaultdict
 
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption
-from .forms import ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
+from .models import Manufacturer, Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption
+from .forms import ManufacturerForm, ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
 
 
 # Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
@@ -273,6 +273,103 @@ def dashboard(request):
 
 # ==================== INDIAN KULFI PRODUCTS MODULE ====================
 
+
+def get_product_manufacturer_name(product):
+    if getattr(product, 'manufacturer', None) and product.manufacturer.name:
+        return product.manufacturer.name.strip()
+    return (product.category or '').strip()
+
+
+@login_required
+@permission_required('inventory.add_product', raise_exception=True)
+def add_manufacturer(request):
+    """Add manufacturers, manage linked products, and perform manufacturer actions."""
+    selected_manufacturer_id = request.GET.get('manufacturer_id', '').strip()
+
+    if request.method == 'POST':
+        action = (request.POST.get('action') or '').strip()
+
+        if action == 'create_manufacturer':
+            form = ManufacturerForm(request.POST)
+            if form.is_valid():
+                manufacturer = form.save()
+                messages.success(request, f'Manufacturer "{manufacturer.name}" added successfully!')
+                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={manufacturer.id}")
+        elif action == 'switch_product_manufacturer':
+            product_id = request.POST.get('product_id')
+            target_manufacturer_id = request.POST.get('target_manufacturer_id')
+            selected_manufacturer_id = request.POST.get('selected_manufacturer_id', '').strip()
+
+            product = Product.objects.filter(pk=product_id).select_related('manufacturer').first()
+            target_manufacturer = Manufacturer.objects.filter(pk=target_manufacturer_id).first()
+
+            if not product:
+                messages.error(request, 'Selected product was not found.')
+            elif not target_manufacturer:
+                messages.error(request, 'Please choose a valid target manufacturer.')
+            else:
+                old_name = get_product_manufacturer_name(product) or 'Unassigned'
+                product.manufacturer = target_manufacturer
+                product.category = target_manufacturer.name
+                product.save()
+                messages.success(
+                    request,
+                    f'Product "{product.name}" moved from "{old_name}" to "{target_manufacturer.name}".',
+                )
+
+            if selected_manufacturer_id:
+                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={selected_manufacturer_id}")
+            return redirect('add_manufacturer')
+        elif action == 'delete_manufacturer':
+            manufacturer_id = request.POST.get('manufacturer_id')
+            manufacturer = Manufacturer.objects.filter(pk=manufacturer_id).first()
+            if not manufacturer:
+                messages.error(request, 'Selected manufacturer was not found.')
+                return redirect('add_manufacturer')
+
+            linked_count = Product.objects.filter(manufacturer=manufacturer).count()
+            if linked_count > 0:
+                messages.error(
+                    request,
+                    f'Cannot delete "{manufacturer.name}" because {linked_count} product(s) are still linked. '
+                    'Switch those products first.',
+                )
+                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={manufacturer.id}")
+
+            manufacturer_name = manufacturer.name
+            manufacturer.delete()
+            messages.success(request, f'Manufacturer "{manufacturer_name}" deleted successfully.')
+            return redirect('add_manufacturer')
+
+        form = ManufacturerForm()
+    else:
+        form = ManufacturerForm()
+
+    manufacturers = Manufacturer.objects.order_by('name')
+    selected_manufacturer = None
+    if selected_manufacturer_id:
+        selected_manufacturer = manufacturers.filter(pk=selected_manufacturer_id).first()
+
+    manufacturer_products = Product.objects.none()
+    switch_target_manufacturers = Manufacturer.objects.none()
+    if selected_manufacturer:
+        manufacturer_products = (
+            Product.objects.filter(manufacturer=selected_manufacturer)
+            .select_related('manufacturer')
+            .order_by('sku', 'name')
+        )
+        switch_target_manufacturers = manufacturers.exclude(pk=selected_manufacturer.pk)
+
+    context = {
+        'form': form,
+        'manufacturers': manufacturers,
+        'selected_manufacturer': selected_manufacturer,
+        'manufacturer_products': manufacturer_products,
+        'switch_target_manufacturers': switch_target_manufacturers,
+        'title': 'Add Manufacturer',
+    }
+    return render(request, 'inventory/add_manufacturer.html', context)
+
 @login_required
 @permission_required('inventory.add_product', raise_exception=True)
 def add_product(request):
@@ -293,7 +390,7 @@ def add_product(request):
 @login_required
 def product_list(request):
     """List all products with management options"""
-    products = Product.objects.filter(is_active=True).order_by('sku')
+    products = Product.objects.filter(is_active=True).select_related('manufacturer').order_by('sku')
     
     # Pagination
     paginator = Paginator(products, 25)
@@ -588,8 +685,8 @@ def inventory_list(request):
         '-name': '-name',
         'sku': 'sku',
         '-sku': '-sku',
-        'current_stock': 'display_stock',
-        '-current_stock': '-display_stock',
+        'current_stock': 'stock',
+        '-current_stock': '-stock',
         'reorder_level': 'reorder_level',
         '-reorder_level': '-reorder_level',
         'cost_price': 'cost_price',
@@ -601,15 +698,36 @@ def inventory_list(request):
     products_ordered = list(products.order_by('sku'))
     stock_map = get_stock_as_of_date_map(products_ordered, selected_date) if selected_date else {}
 
-    # Ensure all products have display_stock set
+    grouped_products_map = {}
     for product in products_ordered:
-        if selected_date:
-            product.display_stock = max(0, stock_map.get(product.id, 0))
-        else:
-            product.display_stock = max(0, product.current_stock)
-        # Remove 'KC' from product name for display
-        if 'KC' in product.name:
-            product.name = product.name.replace('KC', '').strip()
+        display_stock = max(0, stock_map.get(product.id, 0)) if selected_date else max(0, product.current_stock)
+        display_name = normalize_sales_product_name(product.name)
+        group_key = display_name.lower()
+
+        if group_key not in grouped_products_map:
+            grouped_products_map[group_key] = {
+                'name': display_name,
+                'stock': 0,
+                'reorder_level': product.reorder_level,
+                'cost_price': product.cost_price,
+                'selling_price': product.selling_price,
+                'representative_product': product,
+                'representative_stock': display_stock,
+                'products': [],
+            }
+
+        group = grouped_products_map[group_key]
+        group['stock'] += display_stock
+        group['products'].append(product)
+
+        current_rank = (group['representative_stock'], -len(group['representative_product'].sku or ''))
+        candidate_rank = (display_stock, -len(product.sku or ''))
+        if candidate_rank > current_rank:
+            group['representative_product'] = product
+            group['representative_stock'] = display_stock
+            group['reorder_level'] = product.reorder_level
+            group['cost_price'] = product.cost_price
+            group['selling_price'] = product.selling_price
 
     movement_product_ids = set()
     if movement_filter:
@@ -624,38 +742,79 @@ def inventory_list(request):
         )
 
     product_list = []
-    for product in products_ordered:
-        display_stock = product.display_stock
+    for group in grouped_products_map.values():
+        representative = group['representative_product']
 
         movement_exists = True
         if movement_filter:
-            movement_exists = product.id in movement_product_ids
+            movement_exists = any(product.id in movement_product_ids for product in group['products'])
 
         if not movement_exists:
             continue
 
-        if status_filter == 'low_stock' and display_stock > product.reorder_level:
+        if status_filter == 'low_stock' and group['stock'] > group['reorder_level']:
             continue
-        if status_filter == 'in_stock' and display_stock <= product.reorder_level:
+        if status_filter == 'in_stock' and group['stock'] <= group['reorder_level']:
             continue
 
-        product_list.append(product)
+        group['sku'] = representative.sku
+        group['category'] = representative.category
+        group['product_id'] = representative.id
+        group['display_stock'] = group['stock']
+        product_list.append(group)
 
     sort_key = sort_options.get(sort_by, 'sku')
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
 
-    # Custom display order when sorting by SKU (default view)
-    _KULFI_SKU_ORDER = [
-        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
-        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
-        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    # Custom display order for View Inventory (default view)
+    _INVENTORY_PRODUCT_DISPLAY_ORDER = [
+        'malai',
+        'kesar badam',
+        'kesar pista',
+        'pista badam',
+        'chocolate',
+        'strawberry',
+        'mango malai',
+        'dry fruit',
+        'butterscotch',
+        'rose',
+        'black currant',
+        'caramel coffee',
+        'coconut',
+        'elachi',
+        'litchi',
+        'kesar kajoor',
+        'guava',
+        'paan',
+        'pot',
+        'blueberry',
+        'gulkand',
+        'custard apple',
     ]
+    _INVENTORY_PRODUCT_DISPLAY_ALIASES = {
+        'blackcurrant': 'black currant',
+        'black current': 'black currant',
+        'elaichi': 'elachi',
+        'blue berry': 'blueberry',
+    }
+    _inventory_order_index = {
+        name: idx for idx, name in enumerate(_INVENTORY_PRODUCT_DISPLAY_ORDER)
+    }
+
+    def _inventory_display_sort_key(product_row):
+        raw_name = (product_row.get('name') or '').strip().lower()
+        canonical_name = _INVENTORY_PRODUCT_DISPLAY_ALIASES.get(raw_name, raw_name)
+        return (
+            _inventory_order_index.get(canonical_name, len(_inventory_order_index)),
+            canonical_name,
+            product_row.get('sku') or '',
+        )
+
     if sort_attr == 'sku' and not reverse_sort:
-        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
-        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+        product_list.sort(key=_inventory_display_sort_key)
     else:
-        product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+        product_list.sort(key=lambda product: product[sort_attr], reverse=reverse_sort)
 
     # Calculate totals from source data with proper display_stock
     # Recalculate to ensure accuracy with filtered product_list
@@ -664,13 +823,10 @@ def inventory_list(request):
     total_sales_price = Decimal('0.0')
     
     for product in product_list:
-        # Use display_stock which is the calculated stock for the selected date
-        qty = product.display_stock if hasattr(product, 'display_stock') else (
-            stock_map.get(product.id, 0) if selected_date else product.current_stock
-        )
+        qty = product['stock']
         total_stock += qty
-        total_cost_price += Decimal(qty) * product.cost_price
-        total_sales_price += Decimal(qty) * product.selling_price
+        total_cost_price += Decimal(qty) * product['representative_product'].cost_price
+        total_sales_price += Decimal(qty) * product['selling_price']
 
     paginator = Paginator(product_list, per_page)
     page_number = request.GET.get('page', 1)
@@ -1213,52 +1369,83 @@ def quick_inventory_entry(request):
         except ValueError:
             selected_movement_date = None
 
-    # Build product groups: one entry per normalized flavor name, pairing IK and KC variants
+    # Build product groups: one entry per normalized flavor name, with per-manufacturer product bindings.
     all_products = list(Product.objects.filter(is_active=True).order_by('sku'))
     stock_map = (
         get_stock_as_of_date_map(all_products, selected_movement_date)
         if selected_movement_date else
         {product.id: product.current_stock for product in all_products}
     )
+
+    manufacturer_names = []
+    seen_manufacturers = set()
+    for product in all_products:
+        manufacturer_name = get_product_manufacturer_name(product)
+        if manufacturer_name and manufacturer_name not in seen_manufacturers:
+            seen_manufacturers.add(manufacturer_name)
+            manufacturer_names.append(manufacturer_name)
+
+    manufacturer_names.sort()
+
     product_groups_map = {}
     for product in all_products:
         norm_name = normalize_sales_product_name(product.name)
         norm_key = norm_name.lower()
+        product_stock = max(0, stock_map.get(product.id, 0))
+        manufacturer_name = get_product_manufacturer_name(product)
+
         if norm_key not in product_groups_map:
             product_groups_map[norm_key] = {
                 'name': norm_name,
-                'ik': None,
-                'kc': None,
-                'ik_stock': 0,
-                'kc_stock': 0,
-                'ik_cost_override': IK_QUICK_ENTRY_COST_BY_NAME.get(norm_key),
-                'kc_cost_override': KC_QUICK_ENTRY_COST_BY_NAME.get(norm_key),
+                'total_stock': 0,
+                'manufacturer_rows': [],
             }
-        category = (product.category or '').strip().lower()
-        if category == 'kulfi corner':
-            product_groups_map[norm_key]['kc'] = product
-            product_groups_map[norm_key]['kc_stock'] = max(0, stock_map.get(product.id, 0))
-        else:
-            product_groups_map[norm_key]['ik'] = product
-            product_groups_map[norm_key]['ik_stock'] = max(0, stock_map.get(product.id, 0))
 
-    for group in product_groups_map.values():
-        # If only KC product exists for a flavor, reuse it for IK selection.
-        # This supports shared inventory with manufacturer-specific costing.
-        if group['ik'] is None and group['kc'] is not None:
-            group['ik'] = group['kc']
-            group['ik_stock'] = group['kc_stock']
+        group = product_groups_map[norm_key]
+        row_by_manufacturer = {row['manufacturer']: row for row in group['manufacturer_rows']}
+        if manufacturer_name not in row_by_manufacturer:
+            row_by_manufacturer[manufacturer_name] = {
+                'manufacturer': manufacturer_name,
+                'product': product,
+                'stock': 0,
+                'cost_override': None,
+            }
+
+        m_row = row_by_manufacturer[manufacturer_name]
+        m_row['stock'] += product_stock
+
+        current_product = m_row['product']
+        if current_product is None:
+            m_row['product'] = product
+        else:
+            current_is_nb = (current_product.sku or '').strip().upper().startswith('NB')
+            candidate_is_nb = (product.sku or '').strip().upper().startswith('NB')
+            if current_is_nb and not candidate_is_nb:
+                m_row['product'] = product
+
+        if manufacturer_name == 'Indian Kulfi':
+            m_row['cost_override'] = IK_QUICK_ENTRY_COST_BY_NAME.get(norm_key)
+        elif manufacturer_name == 'Kulfi Corner':
+            m_row['cost_override'] = KC_QUICK_ENTRY_COST_BY_NAME.get(norm_key)
+
+        group['manufacturer_rows'] = sorted(row_by_manufacturer.values(), key=lambda row: row['manufacturer'])
+
+        group['total_stock'] += product_stock
 
     product_groups = sorted(
         product_groups_map.values(),
         key=lambda g: min(
-            g['ik'].sku if g['ik'] else 'ZZZ999',
-            g['kc'].sku if g['kc'] else 'ZZZ999',
-        )
+            ((row['product'].sku if row['product'] else 'ZZZ999') for row in g['manufacturer_rows']),
+            default='ZZZ999',
+        ),
     )
+
+    if selected_manufacturer and selected_manufacturer not in manufacturer_names:
+        selected_manufacturer = ''
 
     context = {
         'product_groups': product_groups,
+        'manufacturer_options': manufacturer_names,
         'today': timezone.now().date(),
         'selected_movement_date': selected_movement_date,
         'selected_manufacturer': selected_manufacturer,
@@ -1407,17 +1594,43 @@ def inventory_date_history(request):
 
 @login_required
 def stock_order(request):
-    """Stock order form for Indian Kulfi and Kulfi Corner manufacturers."""
+    """Stock order form with dynamic manufacturer/product catalog."""
+    catalog = OrderedDict()
+    for product in Product.objects.filter(is_active=True).select_related('manufacturer').order_by('sku', 'name'):
+        manufacturer_name = get_product_manufacturer_name(product) or 'Unassigned'
+        display_name = normalize_sales_product_name(product.name)
+        if manufacturer_name not in catalog:
+            catalog[manufacturer_name] = OrderedDict()
+
+        if display_name not in catalog[manufacturer_name]:
+            catalog[manufacturer_name][display_name] = {
+                'name': display_name,
+                'cost': float(product.cost_price or 0),
+            }
+
+    stock_order_catalog = {
+        manufacturer: list(products.values())
+        for manufacturer, products in sorted(catalog.items(), key=lambda item: item[0])
+    }
+
     today = date.today().strftime('%Y-%m-%d')
-    return render(request, 'inventory/stock_order.html', {'today': today})
+    return render(
+        request,
+        'inventory/stock_order.html',
+        {
+            'today': today,
+            'manufacturer_options': list(stock_order_catalog.keys()),
+            'stock_order_catalog_json': json.dumps(stock_order_catalog),
+        },
+    )
 
 # ==================== SALES MODULE ====================
 
 def normalize_sales_product_name(name):
     """Normalize product name for manufacturer-agnostic sales grouping."""
     cleaned_name = re.sub(r'\s+', ' ', (name or '').strip())
-    # Remove leading manufacturer tokens used in product names (e.g., 'IK Malai', 'KC Malai').
-    cleaned_name = re.sub(r'^(IK|KC)\s*[-:]*\s*', '', cleaned_name, flags=re.IGNORECASE)
+    # Remove leading manufacturer codes used in product names (e.g., 'IK Malai', 'KC Malai', 'NB013 Malai').
+    cleaned_name = re.sub(r'^(?:[A-Z]{2,}\d*\s*[-:]*\s*)+', '', cleaned_name)
     cleaned_name = re.sub(r'\s*\((IK|KC)\)$', '', cleaned_name, flags=re.IGNORECASE)
     return cleaned_name.strip()
 
@@ -2582,13 +2795,15 @@ def get_product_price(request):
 
 @login_required
 def get_next_sku(request):
-    """AJAX endpoint to get next SKU based on selected category."""
-    category = request.GET.get('category', '')
-    if not category:
-        return JsonResponse({'success': False, 'message': 'Category is required'})
+    """AJAX endpoint to get next SKU based on selected manufacturer/category."""
+    manufacturer = (request.GET.get('manufacturer') or '').strip()
+    category = (request.GET.get('category') or '').strip()
+    source_value = manufacturer or category
+    if not source_value:
+        return JsonResponse({'success': False, 'message': 'Manufacturer is required'})
 
-    next_sku = ProductForm.generate_next_sku(category)
-    prefix = ProductForm.get_category_prefix(category)
+    next_sku = ProductForm.generate_next_sku(source_value)
+    prefix = ProductForm.get_category_prefix(source_value)
     return JsonResponse({'success': True, 'sku': next_sku, 'prefix': prefix})
 
 

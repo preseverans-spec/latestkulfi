@@ -18,10 +18,26 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import datetime, timedelta
 
+
+class Manufacturer(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    code = models.CharField(max_length=20, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
 class Product(models.Model):
     """Product model for inventory management"""
     name = models.CharField(max_length=200, unique=True)
     sku = models.CharField(max_length=50, unique=True)
+    manufacturer = models.ForeignKey(Manufacturer, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     category = models.CharField(max_length=100)
     
     # Pricing

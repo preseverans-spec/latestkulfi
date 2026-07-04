@@ -133,8 +133,9 @@
             <label class="form-label mb-1" for="manufacturerSelect">Manufacturer</label>
             <select id="manufacturerSelect" class="form-select" style="min-width:200px;">
                 <option value="">-- Select Manufacturer --</option>
-                <option value="indian_kulfi">Indian Kulfi</option>
-                <option value="kulfi_corner">Kulfi Corner</option>
+                {% for manufacturer in manufacturer_options %}
+                <option value="{{ manufacturer }}">{{ manufacturer }}</option>
+                {% endfor %}
             </select>
         </div>
     </div>
@@ -264,8 +265,7 @@
         Please select a manufacturer above to view the order form.
     </div>
 
-    <!-- Indian Kulfi Table -->
-    <table class="order-table" id="indianKulfiTable" style="display:none;">
+    <table class="order-table" id="manufacturerOrderTable" style="display:none;">
         <thead>
             <tr>
                 <th style="width:45px;">S.No.</th>
@@ -276,45 +276,14 @@
                 <th class="row-total-col total-col">Total</th>
             </tr>
         </thead>
-        <tbody id="indianKulfiBody"></tbody>
+        <tbody id="manufacturerOrderBody"></tbody>
         <tfoot>
             <tr>
                 <td colspan="2" style="font-weight:700;">Total</td>
                 <td class="cost-col"></td>
-                <td id="ikTotalLot" style="font-weight:700;">0</td>
-                <td id="ikTotalQty" style="font-weight:700;">0</td>
-                <td class="row-total-col" id="ikTotalAmt" style="font-weight:700;">₹0.00</td>
-            </tr>
-        </tfoot>
-    </table>
-
-    <!-- Kulfi Corner Table -->
-    <table class="order-table" id="kulfiCornerTable" style="display:none;">
-        <thead>
-            <tr>
-                <th style="width:45px;">S.No.</th>
-                <th>Kulfi Name</th>
-                <th class="cost-col">Cost/Piece</th>
-                <th colspan="2">ORDER</th>
-                <th class="row-total-col total-col">TOTAL</th>
-            </tr>
-            <tr>
-                <th></th>
-                <th></th>
-                <th class="cost-col"></th>
-                <th style="width:90px;">Pack</th>
-                <th style="width:90px;">Quantity</th>
-                <th class="row-total-col"></th>
-            </tr>
-        </thead>
-        <tbody id="kulfiCornerBody"></tbody>
-        <tfoot>
-            <tr>
-                <td colspan="2" style="font-weight:700;">Total</td>
-                <td class="cost-col"></td>
-                <td id="kcTotalPack" style="font-weight:700;">0</td>
-                <td id="kcTotalQty" style="font-weight:700;">0</td>
-                <td class="row-total-col" id="kcTotalAmt" style="font-weight:700;">₹0.00</td>
+                <td id="orderTotalLot" style="font-weight:700;">0</td>
+                <td id="orderTotalQty" style="font-weight:700;">0</td>
+                <td class="row-total-col" id="orderTotalAmt" style="font-weight:700;">₹0.00</td>
             </tr>
         </tfoot>
     </table>
@@ -332,50 +301,19 @@
 </div>
 
 <script>
-    const indianKulfiProducts = [
-        { name: 'Malai',          cost: 24.17 },
-        { name: 'Kesar Badam',    cost: 24.17 },
-        { name: 'Kesar Pista',    cost: 24.17 },
-        { name: 'Pista Badam',    cost: 26.67 },
-        { name: 'Chocolate',      cost: 26.67 },
-        { name: 'Strawberry',     cost: 24.17 },
-        { name: 'Mango Malai',    cost: 24.17 },
-        { name: 'Dry Fruit',      cost: 26.67 },
-        { name: 'Butterscotch',   cost: 26.67 },
-        { name: 'Rose',           cost: 26.67 },
-        { name: 'Blackcurrent',   cost: 26.67 },
-        { name: 'Caramel Coffee', cost: 26.67 },
-        { name: 'Coconut',        cost: 24.17 },
-        { name: 'Elaichi',        cost: 24.17 },
-        { name: 'Litchi',         cost: 24.17 },
-        { name: 'Kesar Kajoor',   cost: 24.17 },
-        { name: 'Guava',          cost: 26.67 },
-        { name: 'Paan',           cost: 26.67 },
-    ];
+    const stockOrderCatalog = JSON.parse('{{ stock_order_catalog_json|escapejs }}');
 
-    const kulfiCornerProducts = [
-        { name: 'Malai',          cost: 28.00 },
-        { name: 'Kesar Badam',    cost: 28.00 },
-        { name: 'Kesar Pista',    cost: 28.00 },
-        { name: 'Pista Badam',    cost: 28.00 },
-        { name: 'Chocolate',      cost: 28.00 },
-        { name: 'Strawberry',     cost: 26.00 },
-        { name: 'Mango Malai',    cost: 26.00 },
-        { name: 'Dry Fruit',      cost: 28.00 },
-        { name: 'Butterscotch',   cost: 28.00 },
-        { name: 'Rose',           cost: 28.00 },
-        { name: 'Blackcurrent',   cost: 28.00 },
-        { name: 'Caramel Coffee', cost: 28.00 },
-        { name: 'Coconut',        cost: 26.00 },
-        { name: 'Elaichi',        cost: 26.00 },
-        { name: 'Litchi',         cost: 26.00 },
-        { name: 'Kesar Kajoor',   cost: 26.00 },
-        { name: 'Guava',          cost: 28.00 },
-        { name: 'Paan',           cost: 28.00 },
-    ];
+    function getSelectedManufacturer() {
+        return document.getElementById('manufacturerSelect').value;
+    }
 
-    function buildTableBody(products, bodyId, inputPrefix) {
-        const tbody = document.getElementById(bodyId);
+    function getSelectedProducts() {
+        const manufacturer = getSelectedManufacturer();
+        return stockOrderCatalog[manufacturer] || [];
+    }
+
+    function buildTableBody(products) {
+        const tbody = document.getElementById('manufacturerOrderBody');
         tbody.innerHTML = '';
         products.forEach(function(p, i) {
             const sno = i + 1;
@@ -383,14 +321,14 @@
             row.innerHTML =
                 '<td>' + sno + '</td>' +
                 '<td class="name-col">' + p.name + '</td>' +
-                '<td class="cost-col">₹' + p.cost.toFixed(2) + '</td>' +
+                '<td class="cost-col">₹' + Number(p.cost || 0).toFixed(2) + '</td>' +
                 '<td>' +
-                  '<input type="number" min="0" step="1" id="' + inputPrefix + '_lot_' + i + '" ' +
-                  'data-index="' + i + '" data-prefix="' + inputPrefix + '" data-cost="' + p.cost + '" ' +
+                  '<input type="number" min="0" step="1" id="order_lot_' + i + '" ' +
+                  'data-index="' + i + '" data-cost="' + Number(p.cost || 0) + '" ' +
                   'class="lot-input" placeholder="0" value="">' +
                 '</td>' +
-                '<td id="' + inputPrefix + '_qty_' + i + '"></td>' +
-                '<td class="row-total-col" id="' + inputPrefix + '_total_' + i + '"></td>';
+                '<td id="order_qty_' + i + '"></td>' +
+                '<td class="row-total-col" id="order_total_' + i + '"></td>';
             tbody.appendChild(row);
         });
 
@@ -402,30 +340,28 @@
             });
             input.addEventListener('input', function() {
                 recalcRow(input);
-                recalcFooter(inputPrefix);
+                recalcFooter();
             });
         });
     }
 
     function recalcRow(input) {
         const i = input.dataset.index;
-        const prefix = input.dataset.prefix;
         const cost = parseFloat(input.dataset.cost);
         const raw = input.value.trim();
         const lotVal = raw === '' ? 0 : (parseInt(raw) || 0);
         const qty = lotVal * 6;
         const total = qty * cost;
-        const qtyEl = document.getElementById(prefix + '_qty_' + i);
-        const totEl = document.getElementById(prefix + '_total_' + i);
+        const qtyEl = document.getElementById('order_qty_' + i);
+        const totEl = document.getElementById('order_total_' + i);
         qtyEl.textContent  = (raw === '' || lotVal === 0) ? '' : qty;
         totEl.textContent  = (raw === '' || lotVal === 0) ? '' : '₹' + total.toFixed(2);
     }
 
-    function recalcFooter(prefix) {
-        const inputs = document.querySelectorAll('input[data-prefix="' + prefix + '"]');
+    function recalcFooter() {
+        const inputs = document.querySelectorAll('.lot-input');
         let totalLot = 0, totalQty = 0, totalAmt = 0;
         inputs.forEach(function(input) {
-            const i = input.dataset.index;
             const cost = parseFloat(input.dataset.cost);
             const lotVal = parseInt(input.value) || 0;
             const qty = lotVal * 6;
@@ -434,39 +370,25 @@
             totalAmt += qty * cost;
         });
 
-        if (prefix === 'ik') {
-            document.getElementById('ikTotalLot').textContent = totalLot;
-            document.getElementById('ikTotalQty').textContent = totalQty;
-            document.getElementById('ikTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
-        } else {
-            document.getElementById('kcTotalPack').textContent = totalLot;
-            document.getElementById('kcTotalQty').textContent = totalQty;
-            document.getElementById('kcTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
-        }
+        document.getElementById('orderTotalLot').textContent = totalLot;
+        document.getElementById('orderTotalQty').textContent = totalQty;
+        document.getElementById('orderTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
     }
 
     function showManufacturer(val) {
-        const ikTable = document.getElementById('indianKulfiTable');
-        const kcTable = document.getElementById('kulfiCornerTable');
+        const orderTable = document.getElementById('manufacturerOrderTable');
         const noMsg  = document.getElementById('noManufacturerMsg');
         const actionBar = document.getElementById('actionBar');
 
-        if (val === 'indian_kulfi') {
+        if (val && stockOrderCatalog[val]) {
             noMsg.style.display = 'none';
-            ikTable.style.display = 'table';
-            kcTable.style.display = 'none';
+            orderTable.style.display = 'table';
             actionBar.style.cssText = 'display:flex!important;';
-            buildTableBody(indianKulfiProducts, 'indianKulfiBody', 'ik');
-        } else if (val === 'kulfi_corner') {
-            noMsg.style.display = 'none';
-            ikTable.style.display = 'none';
-            kcTable.style.display = 'table';
-            actionBar.style.cssText = 'display:flex!important;';
-            buildTableBody(kulfiCornerProducts, 'kulfiCornerBody', 'kc');
+            buildTableBody(getSelectedProducts());
+            recalcFooter();
         } else {
             noMsg.style.display = 'block';
-            ikTable.style.display = 'none';
-            kcTable.style.display = 'none';
+            orderTable.style.display = 'none';
             actionBar.style.cssText = 'display:none!important;';
         }
     }
@@ -476,14 +398,12 @@
     });
 
     function clearInputs() {
-        const val = document.getElementById('manufacturerSelect').value;
-        const prefix = val === 'indian_kulfi' ? 'ik' : 'kc';
-        const inputs = document.querySelectorAll('input[data-prefix="' + prefix + '"]');
+        const inputs = document.querySelectorAll('.lot-input');
         inputs.forEach(function(input) {
             input.value = '0';
             recalcRow(input);
         });
-        recalcFooter(prefix);
+        recalcFooter();
     }
 
     function resetForm() {
@@ -494,28 +414,23 @@
 
     /* ── Collect current order rows as plain data ── */
     function getOrderData() {
-        const manufacturer = document.getElementById('manufacturerSelect').value;
-        const prefix = manufacturer === 'indian_kulfi' ? 'ik' : 'kc';
-        const lotLabel = manufacturer === 'indian_kulfi' ? 'Lot' : 'Pack';
-        const mfgLabel = manufacturer === 'indian_kulfi' ? 'Indian Kulfi' : 'Kulfi Corner';
+        const manufacturer = getSelectedManufacturer();
+        const lotLabel = 'Lot';
+        const mfgLabel = manufacturer;
         const date     = document.getElementById('orderDate').value;
-        const products = manufacturer === 'indian_kulfi' ? indianKulfiProducts : kulfiCornerProducts;
+        const products = getSelectedProducts();
 
         const rows = [];
         products.forEach(function(p, i) {
-            const input  = document.getElementById(prefix + '_lot_' + i);
+            const input  = document.getElementById('order_lot_' + i);
             const lotVal = parseInt(input ? input.value : '') || 0;
             const qty    = lotVal * 6;
             rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '' });
         });
 
         // Footer totals
-        const totalLotEl = prefix === 'ik'
-            ? document.getElementById('ikTotalLot')
-            : document.getElementById('kcTotalPack');
-        const totalQtyEl = prefix === 'ik'
-            ? document.getElementById('ikTotalQty')
-            : document.getElementById('kcTotalQty');
+        const totalLotEl = document.getElementById('orderTotalLot');
+        const totalQtyEl = document.getElementById('orderTotalQty');
 
         return {
             mfgLabel, lotLabel, date, rows,

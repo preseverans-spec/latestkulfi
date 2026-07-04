@@ -1,15 +1,23 @@
 from django.contrib import admin
-from .models import Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport
+from .models import Manufacturer, Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport
+
+
+@admin.register(Manufacturer)
+class ManufacturerAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'is_active', 'created_at')
+    list_filter = ('is_active', 'created_at')
+    search_fields = ('name', 'code')
+    readonly_fields = ('created_at', 'updated_at')
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'sku', 'category', 'current_stock', 'selling_price', 'is_active')
-    list_filter = ('is_active', 'category', 'created_at')
+    list_display = ('name', 'sku', 'manufacturer', 'category', 'current_stock', 'selling_price', 'is_active')
+    list_filter = ('is_active', 'manufacturer', 'category', 'created_at')
     search_fields = ('name', 'sku')
     readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         ('Basic Info', {
-            'fields': ('name', 'sku', 'category', 'description')
+            'fields': ('name', 'sku', 'manufacturer', 'category', 'description')
         }),
         ('Pricing', {
             'fields': ('cost_price', 'selling_price')

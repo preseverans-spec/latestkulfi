@@ -4,6 +4,7 @@ Django settings for kulfi project.
 
 from pathlib import Path
 import os
+from urllib.parse import urlparse
 import dj_database_url
 from django.core.management.utils import get_random_secret_key
 from datetime import timedelta
@@ -106,9 +107,27 @@ WSGI_APPLICATION = 'kulfi_config.wsgi.application'
 # Database
 DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
+    parsed_db_url = urlparse(DATABASE_URL)
+    db_host = (parsed_db_url.hostname or '').strip().lower()
+    local_db_hosts = {'localhost', '127.0.0.1', '::1'}
+
+    # Default to SSL for remote databases, but disable it for local PostgreSQL.
+    db_ssl_require_env = os.getenv('DB_SSL_REQUIRE')
+    if db_ssl_require_env is None:
+        db_ssl_require = db_host not in local_db_hosts
+    else:
+        db_ssl_require = _as_bool(db_ssl_require_env)
+
     DATABASES = {
-        'default': dj_database_url.config(default=DATABASE_URL, conn_max_age=600, ssl_require=True)
+        'default': dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=db_ssl_require,
+        )
     }
+
+    if not db_ssl_require:
+        DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = os.getenv('DB_SSLMODE', 'disable')
 else:
     DATABASES = {
         'default': {

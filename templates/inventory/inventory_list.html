@@ -265,13 +265,10 @@
             <thead class="table-light">
                 <tr>
                     <th class="draggable-header" draggable="true" data-column="name">Product Name</th>
-                    <th class="draggable-header" draggable="true" data-column="sku">SKU</th>
-                    <th class="draggable-header" draggable="true" data-column="category">Category</th>
                     <th class="draggable-header" draggable="true" data-column="current_stock">
                         {% if selected_date %}Stock as of {{ stock_as_of_label }}{% else %}Current Stock (Live){% endif %}
                     </th>
                     <th class="draggable-header" draggable="true" data-column="reorder_level">Reorder Level</th>
-                    <th class="draggable-header" draggable="true" data-column="cost_price">Cost Price</th>
                     <th class="draggable-header" draggable="true" data-column="selling_price">Selling Price</th>
                     <th class="draggable-header" draggable="true" data-column="status">Status</th>
                     <th class="draggable-header" draggable="true" data-column="actions">Actions</th>
@@ -281,28 +278,25 @@
                 {% for product in products %}
                 <tr>
                     <td><strong>{{ product.name }}</strong></td>
-                    <td>{{ product.sku }}</td>
-                    <td>Indian Kulfi</td>
-                    <td>{{ product.display_stock|default_if_none:product.current_stock }}</td>
+                    <td>{{ product.stock|default_if_none:product.display_stock|default_if_none:0 }}</td>
                     <td>{{ product.reorder_level }}</td>
-                    <td>₹{{ product.cost_price }}</td>
                     <td>₹{{ product.selling_price }}</td>
                     <td>
-                        {% if product.display_stock|default_if_none:product.current_stock <= product.reorder_level %}
+                        {% if product.stock|default_if_none:product.display_stock|default_if_none:0 <= product.reorder_level %}
                         <span class="badge bg-danger">Low Stock</span>
                         {% else %}
                         <span class="badge bg-success">In Stock</span>
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{% url 'inventory_history' product.id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
+                        <a href="{% url 'inventory_history' product.product_id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
                             <i class="fas fa-history"></i>
                         </a>
                         <a href="{% url 'quick_inventory_entry' %}" class="btn btn-sm btn-warning btn-action-compact" title="Quick Entry">
                             <i class="fas fa-bolt"></i>
                         </a>
                         {% if user.is_staff %}
-                        <a href="{% url 'clear_stock' product.id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
+                        <a href="{% url 'clear_stock' product.product_id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
                             <i class="fas fa-broom"></i>
                         </a>
                         {% endif %}
@@ -310,7 +304,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="9" class="text-center text-muted">No products found</td>
+                    <td colspan="5" class="text-center text-muted">No products found</td>
                 </tr>
                 {% endfor %}
             </tbody>

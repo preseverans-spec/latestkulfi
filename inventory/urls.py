@@ -14,6 +14,7 @@ urlpatterns = [
     
     # Indian Kulfi Products Management
     path('products/', views.admin_only_view(views.product_list), name='product_list'),
+    path('products/manufacturers/add/', views.admin_only_view(views.add_manufacturer), name='add_manufacturer'),
     path('products/add/', views.admin_only_view(views.add_product), name='add_product'),
     path('products/edit/<int:product_id>/', views.admin_only_view(views.edit_product), name='edit_product'),
     path('products/delete/<int:product_id>/', views.admin_only_view(views.delete_product), name='delete_product'),
