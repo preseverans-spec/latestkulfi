@@ -35,7 +35,7 @@ class Manufacturer(models.Model):
 
 class Product(models.Model):
     """Product model for inventory management"""
-    name = models.CharField(max_length=200, unique=True)
+    name = models.CharField(max_length=200)
     sku = models.CharField(max_length=50, unique=True)
     manufacturer = models.ForeignKey(Manufacturer, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     category = models.CharField(max_length=100)
