@@ -26,6 +26,8 @@ Set these variables in Railway for the web service:
 - `ADMIN_USERNAME=<admin-username>`
 - `ADMIN_EMAIL=<admin-email>`
 - `ADMIN_PASSWORD=<admin-password>`
+- `SEED_DATA_ON_DEPLOY=False`
+- `SEED_FIXTURE_PATH=render_seed.json`
 
 You can use `.env.example` as a template.
 
@@ -46,6 +48,25 @@ python manage.py create_default_superuser
 2. Log in to `/admin/`.
 3. Confirm inventory and sales data can be created.
 4. Confirm static files are loading.
+
+## 5) One-time production data seed (optional)
+
+Use this only when you need to copy your local dataset into a fresh Railway PostgreSQL database.
+
+Full runbook: [DATA_MIGRATION_CHECKLIST.md](DATA_MIGRATION_CHECKLIST.md).
+
+1. Commit and deploy `render_seed.json` once.
+2. Set `SEED_DATA_ON_DEPLOY=True` in Railway variables.
+3. Keep `SEED_FIXTURE_PATH=render_seed.json`.
+4. Deploy once.
+5. The command `python manage.py load_seed_once` will import only when:
+	- Seeding is explicitly enabled.
+	- The fixture file exists.
+	- Product data is not already present.
+6. After successful import:
+	- Set `SEED_DATA_ON_DEPLOY=False`.
+	- Remove `render_seed.json` from the repository.
+	- Deploy again.
 
 ## Notes
 

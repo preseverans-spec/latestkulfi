@@ -16,6 +16,14 @@ class Command(BaseCommand):
     help = "Import the committed SQLite database into the current database once."
 
     def handle(self, *args, **options):
+        # Skip import in production (PostgreSQL) environments
+        database_url = os.getenv('DATABASE_URL', '')
+        if 'postgres' in database_url.lower():
+            self.stdout.write(
+                self.style.WARNING("Skipping SQLite import: running in production environment (PostgreSQL detected).")
+            )
+            return
+
         if Product.objects.exists():
             self.stdout.write(
                 self.style.WARNING("Skipping SQLite import: data already exists in the target database.")
@@ -24,7 +32,10 @@ class Command(BaseCommand):
 
         source_db = Path(settings.BASE_DIR) / "db.sqlite3"
         if not source_db.exists():
-            raise CommandError(f"Source database not found: {source_db}")
+            self.stdout.write(
+                self.style.WARNING(f"Source SQLite database not found: {source_db}. Skipping import.")
+            )
+            return
 
         app_labels = []
         for app_config in apps.get_app_configs():
