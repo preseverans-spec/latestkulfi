@@ -139,6 +139,9 @@
             </select>
         </div>
     </div>
+    <div class="mt-2 text-muted" style="font-size:0.9rem;">
+        Lot rule: Pot = 12 Nos per lot. All other flavors = 6 Nos per lot.
+    </div>
 </div>
 
 <!-- Action Bar -->
@@ -175,6 +178,7 @@
                     '<div style="text-align:center;margin-bottom:10px;">'
                     + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
                     + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + '<div style="font-size:9pt;color:#666;">Lot Rule: Pot = 12 Nos, Others = 6 Nos</div>'
                     + '</div>'
                     + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
                     + '<thead><tr>'
@@ -271,7 +275,7 @@
                 <th style="width:45px;">S.No.</th>
                 <th>Kulfi Name</th>
                 <th class="cost-col">Cost/Piece</th>
-                <th style="width:90px;">Lot</th>
+                <th style="width:90px;">Lot<br><small>(Pot=12, Others=6)</small></th>
                 <th style="width:90px;">Quantity</th>
                 <th class="row-total-col total-col">Total</th>
             </tr>
@@ -324,7 +328,7 @@
                 '<td class="cost-col">₹' + Number(p.cost || 0).toFixed(2) + '</td>' +
                 '<td>' +
                   '<input type="number" min="0" step="1" id="order_lot_' + i + '" ' +
-                  'data-index="' + i + '" data-cost="' + Number(p.cost || 0) + '" ' +
+                                    'data-index="' + i + '" data-cost="' + Number(p.cost || 0) + '" data-units-per-lot="' + Number(p.units_per_lot || 6) + '" ' +
                   'class="lot-input" placeholder="0" value="">' +
                 '</td>' +
                 '<td id="order_qty_' + i + '"></td>' +
@@ -348,9 +352,10 @@
     function recalcRow(input) {
         const i = input.dataset.index;
         const cost = parseFloat(input.dataset.cost);
+        const unitsPerLot = parseInt(input.dataset.unitsPerLot, 10) || 6;
         const raw = input.value.trim();
         const lotVal = raw === '' ? 0 : (parseInt(raw) || 0);
-        const qty = lotVal * 6;
+        const qty = lotVal * unitsPerLot;
         const total = qty * cost;
         const qtyEl = document.getElementById('order_qty_' + i);
         const totEl = document.getElementById('order_total_' + i);
@@ -363,8 +368,9 @@
         let totalLot = 0, totalQty = 0, totalAmt = 0;
         inputs.forEach(function(input) {
             const cost = parseFloat(input.dataset.cost);
+            const unitsPerLot = parseInt(input.dataset.unitsPerLot, 10) || 6;
             const lotVal = parseInt(input.value) || 0;
-            const qty = lotVal * 6;
+            const qty = lotVal * unitsPerLot;
             totalLot += lotVal;
             totalQty += qty;
             totalAmt += qty * cost;
@@ -415,7 +421,7 @@
     /* ── Collect current order rows as plain data ── */
     function getOrderData() {
         const manufacturer = getSelectedManufacturer();
-        const lotLabel = 'Lot';
+        const lotLabel = 'Lot (Pot=12, Others=6)';
         const mfgLabel = manufacturer;
         const date     = document.getElementById('orderDate').value;
         const products = getSelectedProducts();
@@ -424,8 +430,9 @@
         products.forEach(function(p, i) {
             const input  = document.getElementById('order_lot_' + i);
             const lotVal = parseInt(input ? input.value : '') || 0;
-            const qty    = lotVal * 6;
-            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '' });
+            const unitsPerLot = parseInt(input && input.dataset ? input.dataset.unitsPerLot : (p.units_per_lot || 6), 10) || 6;
+            const qty    = lotVal * unitsPerLot;
+            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '', unitsPerLot: unitsPerLot });
         });
 
         // Footer totals
@@ -471,6 +478,7 @@
             + '<div class="hdr">'
             + '<h2>Stock Order</h2>'
             + '<p>Date: ' + d.date + '</p>'
+            + '<p>Lot Rule: Pot = 12 Nos, Others = 6 Nos</p>'
             + '</div>'
             + '<table>'
             + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.lotLabel + '</th><th>Quantity</th></tr></thead>'
@@ -531,6 +539,7 @@
             '<div style="text-align:center;margin-bottom:10px;">'
             + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
             + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+            + '<div style="font-size:9pt;color:#666;">Lot Rule: Pot = 12 Nos, Others = 6 Nos</div>'
             + '</div>'
             + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
             + '<thead><tr>'

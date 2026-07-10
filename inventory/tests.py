@@ -263,7 +263,7 @@ class SyncApiTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(
 			[entry.display_product_name for entry in response.context['admin_day_entries']],
-			['COCONUT', 'ELAICHI', 'GUAVA'],
+			['COCONUT', 'GUAVA', 'ELAICHI'],
 		)
 
 	def test_sales_stock_taken_product_list_uses_requested_labels_and_order(self):
@@ -287,10 +287,10 @@ class SyncApiTests(TestCase):
 			'MANGO MALAI',
 			'BUTTERSCOTCH',
 			'COCONUT',
-			'ELAICHI',
 			'GUAVA',
-			'PAAN',
 			'KESAR KAJOOR',
+			'ELAICHI',
+			'PAAN',
 		]
 		products = [
 			('Malai', 'IK-101'),
@@ -359,7 +359,7 @@ class SyncApiTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(
 			[product['name'] for product in response.context['products']],
-			['COCONUT', 'ELAICHI', 'GUAVA', 'KESAR KAJOOR'],
+			['COCONUT', 'GUAVA', 'KESAR KAJOOR', 'ELAICHI'],
 		)
 
 	def test_quick_sales_entry_treats_elachi_as_elaichi_for_combined_stock(self):
@@ -403,7 +403,7 @@ class SyncApiTests(TestCase):
 		self.assertEqual(response.context['total_combined_stock'], 62)
 		self.assertEqual(
 			[(product['name'], product['stock']) for product in product_rows],
-			[('COCONUT', 20), ('ELAICHI', 29), ('GUAVA', 13)],
+			[('COCONUT', 20), ('GUAVA', 13), ('ELAICHI', 29)],
 		)
 
 	def test_quick_inventory_entry_groups_manufacturer_prefixed_products(self):

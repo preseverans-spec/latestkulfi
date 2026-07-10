@@ -50,6 +50,7 @@
         <h1>STOCK REPORT</h1>
         <p>Period: {{ start_date|date:'d M Y' }} to {{ end_date|date:'d M Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
         <p>Mode: {% if report_mode == 'general' %}General{% else %}Detailed{% endif %}</p>
+        <p>Manufacturer: {% if selected_manufacturer %}{{ selected_manufacturer }}{% else %}All Manufacturers{% endif %}</p>
         {% if include_positive_adjustments %}
         <p>Includes positive adjustments</p>
         {% endif %}

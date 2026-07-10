@@ -67,6 +67,15 @@
                     <label class="form-label mb-1" for="end_date">End Date</label>
                     <input type="date" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="form-control">
                 </div>
+                <div>
+                    <label class="form-label mb-1" for="manufacturer">Manufacturer</label>
+                    <select id="manufacturer" name="manufacturer" class="form-select" style="min-width: 200px;">
+                        <option value="" {% if not selected_manufacturer %}selected{% endif %}>All Manufacturers</option>
+                        {% for manufacturer in manufacturer_options %}
+                        <option value="{{ manufacturer }}" {% if selected_manufacturer == manufacturer %}selected{% endif %}>{{ manufacturer }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <div class="form-check mt-4">
                     <input class="form-check-input" type="checkbox" value="1" id="include_adjustments" name="include_adjustments" {% if include_positive_adjustments %}checked{% endif %}>
                     <label class="form-check-label" for="include_adjustments">
@@ -89,13 +98,13 @@
                     <i class="fas fa-print"></i> Print
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="{% url 'print_stock_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}" target="_blank">
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&manufacturer={{ selected_manufacturer|urlencode }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}" target="_blank">
                         <i class="fas fa-file-alt"></i> Print (HTML)
                     </a></li>
-                    <li><a class="dropdown-item" href="{% url 'print_stock_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&manufacturer={{ selected_manufacturer|urlencode }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
                         <i class="fas fa-file-pdf"></i> Download PDF
                     </a></li>
-                    <li><a class="dropdown-item" href="{% url 'print_stock_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
+                    <li><a class="dropdown-item" href="{% url 'print_stock_report_excel' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}&manufacturer={{ selected_manufacturer|urlencode }}&include_adjustments={% if include_positive_adjustments %}1{% else %}0{% endif %}&view_mode={{ report_mode }}">
                         <i class="fas fa-file-excel"></i> Download Excel
                     </a></li>
                 </ul>

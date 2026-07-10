@@ -1,6 +1,14 @@
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 from .models import StockOrder, StockOrderItem
+
+
+def get_stock_order_units_per_lot(kulfi_name):
+    """Return units per lot used by New Stock Order."""
+    normalized_name = normalize_sales_product_name(kulfi_name).strip().lower()
+    return 12 if normalized_name == 'pot' else 6
+
+
 # Save Stock Order via AJAX
 @csrf_exempt
 @login_required
@@ -16,11 +24,17 @@ def save_stock_order(request):
             created_by=request.user if request.user.is_authenticated else None
         )
         for item in items:
+            try:
+                lot_value = int(item.get('lot', 0) or 0)
+            except (TypeError, ValueError):
+                lot_value = 0
+            lot_value = max(0, lot_value)
+            units_per_lot = get_stock_order_units_per_lot(item.get('name', ''))
             StockOrderItem.objects.create(
                 order=order,
                 kulfi_name=item.get('name'),
-                lot=item.get('lot', 0),
-                quantity=item.get('qty', 0)
+                lot=lot_value,
+                quantity=lot_value * units_per_lot,
             )
         return JsonResponse({'status': 'success'})
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
@@ -767,47 +781,9 @@ def inventory_list(request):
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
 
-    # Custom display order for View Inventory (default view)
-    _INVENTORY_PRODUCT_DISPLAY_ORDER = [
-        'malai',
-        'kesar badam',
-        'kesar pista',
-        'pista badam',
-        'chocolate',
-        'strawberry',
-        'mango malai',
-        'dry fruit',
-        'butterscotch',
-        'rose',
-        'black currant',
-        'caramel coffee',
-        'coconut',
-        'elachi',
-        'litchi',
-        'kesar kajoor',
-        'guava',
-        'paan',
-        'pot',
-        'blueberry',
-        'gulkand',
-        'custard apple',
-    ]
-    _INVENTORY_PRODUCT_DISPLAY_ALIASES = {
-        'blackcurrant': 'black currant',
-        'black current': 'black currant',
-        'elaichi': 'elachi',
-        'blue berry': 'blueberry',
-    }
-    _inventory_order_index = {
-        name: idx for idx, name in enumerate(_INVENTORY_PRODUCT_DISPLAY_ORDER)
-    }
-
     def _inventory_display_sort_key(product_row):
-        raw_name = (product_row.get('name') or '').strip().lower()
-        canonical_name = _INVENTORY_PRODUCT_DISPLAY_ALIASES.get(raw_name, raw_name)
-        return (
-            _inventory_order_index.get(canonical_name, len(_inventory_order_index)),
-            canonical_name,
+        return get_flavor_display_sort_key(
+            product_row.get('name', ''),
             product_row.get('sku') or '',
         )
 
@@ -955,15 +931,13 @@ def _build_inventory_export_context(request):
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
 
-    # Custom display order when sorting by SKU (default view)
-    _KULFI_SKU_ORDER = [
-        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
-        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
-        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
-    ]
     if sort_attr == 'sku' and not reverse_sort:
-        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
-        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+        product_list.sort(
+            key=lambda product: get_flavor_display_sort_key(
+                product.name,
+                product.sku,
+            )
+        )
     else:
         product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
@@ -1434,9 +1408,12 @@ def quick_inventory_entry(request):
 
     product_groups = sorted(
         product_groups_map.values(),
-        key=lambda g: min(
-            ((row['product'].sku if row['product'] else 'ZZZ999') for row in g['manufacturer_rows']),
-            default='ZZZ999',
+        key=lambda group: get_flavor_display_sort_key(
+            group['name'],
+            min(
+                ((row['product'].sku if row['product'] else 'ZZZ999') for row in group['manufacturer_rows']),
+                default='ZZZ999',
+            ),
         ),
     )
 
@@ -1606,12 +1583,15 @@ def stock_order(request):
             catalog[manufacturer_name][display_name] = {
                 'name': display_name,
                 'cost': float(product.cost_price or 0),
+                'units_per_lot': get_stock_order_units_per_lot(display_name),
             }
 
-    stock_order_catalog = {
-        manufacturer: list(products.values())
-        for manufacturer, products in sorted(catalog.items(), key=lambda item: item[0])
-    }
+    stock_order_catalog = {}
+    for manufacturer, products in sorted(catalog.items(), key=lambda item: item[0]):
+        product_rows = list(products.values())
+        if 'bowring' in (manufacturer or '').lower():
+            product_rows.sort(key=lambda item: get_flavor_display_sort_key(item['name']))
+        stock_order_catalog[manufacturer] = product_rows
 
     today = date.today().strftime('%Y-%m-%d')
     return render(
@@ -1633,6 +1613,56 @@ def normalize_sales_product_name(name):
     cleaned_name = re.sub(r'^(?:[A-Z]{2,}\d*\s*[-:]*\s*)+', '', cleaned_name)
     cleaned_name = re.sub(r'\s*\((IK|KC)\)$', '', cleaned_name, flags=re.IGNORECASE)
     return cleaned_name.strip()
+
+
+# Canonical kulfi flavor order requested for stock-facing screens.
+FLAVOR_DISPLAY_ORDER = [
+    'malai',
+    'pista badam',
+    'chocolate',
+    'kesar badam',
+    'kesar pista',
+    'strawberry',
+    'dry fruit',
+    'black currant',
+    'litchi',
+    'caramel coffee',
+    'rose',
+    'mango malai',
+    'butterscotch',
+    'coconut',
+    'guava',
+    'kesar kajoor',
+    'blueberry',
+    'custard apple',
+    'gulkand',
+    'pot',
+]
+FLAVOR_DISPLAY_INDEX = {
+    name: index for index, name in enumerate(FLAVOR_DISPLAY_ORDER)
+}
+FLAVOR_DISPLAY_ALIASES = {
+    'blackcurrent': 'black currant',
+    'blackcurrant': 'black currant',
+    'black current': 'black currant',
+    'butter scotch': 'butterscotch',
+    'blue berry': 'blueberry',
+    'elachi': 'elaichi',
+}
+
+
+def canonicalize_flavor_name(product_name):
+    normalized_name = normalize_sales_product_name(product_name).strip().lower()
+    return FLAVOR_DISPLAY_ALIASES.get(normalized_name, normalized_name)
+
+
+def get_flavor_display_sort_key(product_name, sort_sku=''):
+    canonical_name = canonicalize_flavor_name(product_name)
+    return (
+        FLAVOR_DISPLAY_INDEX.get(canonical_name, len(FLAVOR_DISPLAY_INDEX)),
+        canonical_name,
+        sort_sku or '',
+    )
 
 
 # Fixed product order required for View Sales by Date, Daily Report, and Weekly Report.
@@ -1709,35 +1739,14 @@ DAILY_SALES_PRODUCT_DISPLAY_ALIASES = {
     'blackcurrent': 'black currant',
     'straswberry': 'strawberry',
 }
-SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = [
-    'malai',
-    'pista badam',
-    'chocolate',
-    'kesar badam',
-    'kesar pista',
-    'strawberry',
-    'dry fruit',
-    'black currant',
-    'litchi',
-    'caramel coffee',
-    'rose',
-    'mango malai',
-    'butterscotch',
-    'coconut',
-    'elaichi',
-    'guava',
-    'paan',
-    'kesar kajoor',
-]
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = FLAVOR_DISPLAY_ORDER
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX = {
     name: index for index, name in enumerate(SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER)
 }
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ALIASES = {
-    'black current': 'black currant',
-    'blackcurrant': 'black currant',
-    'butter scotch': 'butterscotch',
-    'elachi': 'elaichi',
+    **FLAVOR_DISPLAY_ALIASES,
     'kajoor': 'kesar kajoor',
+    'kesar kajur': 'kesar kajoor',
     'straswberry': 'strawberry',
 }
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS = {
@@ -1755,10 +1764,12 @@ SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS = {
     'mango malai': 'MANGO MALAI',
     'butterscotch': 'BUTTERSCOTCH',
     'coconut': 'COCONUT',
-    'elaichi': 'ELAICHI',
     'guava': 'GUAVA',
-    'paan': 'PAAN',
     'kesar kajoor': 'KESAR KAJOOR',
+    'blueberry': 'BLUEBERRY',
+    'custard apple': 'CUSTARD APPLE',
+    'gulkand': 'GULKAND',
+    'pot': 'POT',
 }
 
 
@@ -3638,7 +3649,8 @@ def _extract_positive_adjustment_qty(notes):
     return int(match.group(1)) if match else 0
 
 
-def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed'):
+def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed', selected_manufacturer=''):
+    selected_manufacturer = (selected_manufacturer or '').strip()
     movement_types = ['IN']
     if include_positive_adjustments:
         movement_types.append('ADJUSTMENT')
@@ -3647,8 +3659,7 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         movement_type__in=movement_types,
         movement_date__gte=start_date,
         movement_date__lte=end_date,
-        product__category__in=['Indian Kulfi', 'Kulfi Corner'],
-    ).select_related('product', 'created_by').order_by(
+    ).select_related('product', 'product__manufacturer', 'created_by').order_by(
         '-movement_date',
         'product__category',
         'product__sku',
@@ -3661,6 +3672,7 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
     kulfi_corner_quantity = 0
     total_purchase_cost = Decimal('0.0')
     grouped_general_rows = {}
+    manufacturer_set = set()
 
     for movement in raw_movements:
         if movement.movement_type == 'IN':
@@ -3675,8 +3687,13 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         # Use manufacturer stamped at entry time if present; fall back to cost-price detection.
         resolved_manufacturer = (
             _extract_manufacturer_from_notes(movement.notes)
+            or get_product_manufacturer_name(movement.product)
             or _identify_manufacturer_from_cost(movement.product.cost_price)
         )
+        manufacturer_set.add(resolved_manufacturer)
+
+        if selected_manufacturer and resolved_manufacturer.lower() != selected_manufacturer.lower():
+            continue
 
         unit_cost_val = movement.unit_cost or movement.product.cost_price
         movement_rows.append({
@@ -3738,6 +3755,8 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         'include_positive_adjustments': include_positive_adjustments,
         'general_rows': general_rows,
         'report_mode': report_mode,
+        'manufacturer_options': sorted(manufacturer_set),
+        'selected_manufacturer': selected_manufacturer,
     }
 
 @login_required
@@ -3913,6 +3932,7 @@ def stock_report(request):
     """Stock-in report by date range for Indian Kulfi and Kulfi Corner."""
     start_date_raw = (request.GET.get('start_date') or '').strip()
     end_date_raw = (request.GET.get('end_date') or '').strip()
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -3931,6 +3951,8 @@ def stock_report(request):
             'total_purchase_cost': Decimal('0.0'),
             'include_positive_adjustments': include_positive_adjustments,
             'report_mode': report_mode,
+            'manufacturer_options': [],
+            'selected_manufacturer': selected_manufacturer,
             'no_filter': True,
         }
         return render(request, 'inventory/stock_report.html', context)
@@ -3963,6 +3985,7 @@ def stock_report(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
     context['no_filter'] = False
     return render(request, 'inventory/stock_report.html', context)
@@ -3973,6 +3996,7 @@ def print_stock_report_html(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4002,6 +4026,7 @@ def print_stock_report_html(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
     context['now'] = timezone.now()
     return render(request, 'inventory/print_stock_report.html', context)
@@ -4012,6 +4037,7 @@ def print_stock_report_pdf(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4041,6 +4067,7 @@ def print_stock_report_pdf(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4098,7 +4125,7 @@ def print_stock_report_pdf(request):
                 movement = row['movement']
                 data.append([
                     movement.movement_date.strftime('%Y-%m-%d'),
-                    movement.product.category,
+                    row['resolved_manufacturer'],
                     row['entry_type'],
                     movement.product.sku,
                     movement.product.name,
@@ -4140,6 +4167,7 @@ def print_stock_report_excel(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4169,6 +4197,7 @@ def print_stock_report_excel(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4223,7 +4252,7 @@ def print_stock_report_excel(request):
             for row in context['movement_rows']:
                 movement = row['movement']
                 ws.cell(row=row_number, column=1).value = movement.movement_date.strftime('%Y-%m-%d')
-                ws.cell(row=row_number, column=2).value = movement.product.category
+                ws.cell(row=row_number, column=2).value = row['resolved_manufacturer']
                 ws.cell(row=row_number, column=3).value = row['entry_type']
                 ws.cell(row=row_number, column=4).value = movement.product.sku
                 ws.cell(row=row_number, column=5).value = movement.product.name
