@@ -9,35 +9,163 @@ def get_stock_order_units_per_lot(kulfi_name):
     return 12 if normalized_name == 'pot' else 6
 
 
+def _format_stock_order_created_at(dt_value):
+    """Return a safe created-at display string for stock order JSON payloads."""
+    if not dt_value:
+        return ''
+    try:
+        return timezone.localtime(dt_value).strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return dt_value.strftime('%Y-%m-%d %H:%M')
+
+
 # Save Stock Order via AJAX
 @csrf_exempt
 @login_required
 def save_stock_order(request):
+    if not request.user.is_staff:
+        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
     if request.method == 'POST':
-        data = json.loads(request.body.decode())
-        manufacturer = data.get('manufacturer')
-        order_date = data.get('order_date')
-        items = data.get('items', [])
-        order = StockOrder.objects.create(
-            manufacturer=manufacturer,
-            order_date=order_date,
-            created_by=request.user if request.user.is_authenticated else None
-        )
-        for item in items:
+        try:
             try:
-                lot_value = int(item.get('lot', 0) or 0)
+                data = json.loads(request.body.decode() or '{}')
             except (TypeError, ValueError):
-                lot_value = 0
-            lot_value = max(0, lot_value)
-            units_per_lot = get_stock_order_units_per_lot(item.get('name', ''))
-            StockOrderItem.objects.create(
-                order=order,
-                kulfi_name=item.get('name'),
-                lot=lot_value,
-                quantity=lot_value * units_per_lot,
-            )
-        return JsonResponse({'status': 'success'})
+                return JsonResponse({'status': 'error', 'message': 'Invalid payload.'}, status=400)
+
+            manufacturer = (data.get('manufacturer') or '').strip()[:100]
+            order_date = data.get('order_date')
+            order_id = data.get('order_id')
+            raw_items = data.get('items', [])
+
+            if not manufacturer:
+                return JsonResponse({'status': 'error', 'message': 'Manufacturer is required.'}, status=400)
+            if not order_date:
+                return JsonResponse({'status': 'error', 'message': 'Order date is required.'}, status=400)
+            try:
+                parsed_order_date = date.fromisoformat(str(order_date))
+            except (TypeError, ValueError):
+                return JsonResponse({'status': 'error', 'message': 'Invalid order date.'}, status=400)
+
+            normalized_items = []
+            for item in raw_items:
+                name = (item.get('name') or '').strip()[:100]
+                try:
+                    lot_value = int(item.get('lot', 0) or 0)
+                except (TypeError, ValueError):
+                    lot_value = 0
+                lot_value = max(0, lot_value)
+                if not name or lot_value <= 0:
+                    continue
+                units_per_lot = get_stock_order_units_per_lot(name)
+                normalized_items.append({
+                    'name': name,
+                    'lot': lot_value,
+                    'quantity': lot_value * units_per_lot,
+                })
+
+            if not normalized_items:
+                return JsonResponse({'status': 'error', 'message': 'Add at least one flavor with lot greater than 0.'}, status=400)
+
+            with transaction.atomic():
+                if order_id:
+                    order = get_object_or_404(StockOrder, id=order_id)
+                    order.manufacturer = manufacturer
+                    order.order_date = parsed_order_date
+                    order.save(update_fields=['manufacturer', 'order_date'])
+                    order.items.all().delete()
+                else:
+                    order = StockOrder.objects.create(
+                        manufacturer=manufacturer,
+                        order_date=parsed_order_date,
+                        created_by=request.user if request.user.is_authenticated else None,
+                    )
+
+                StockOrderItem.objects.bulk_create([
+                    StockOrderItem(
+                        order=order,
+                        kulfi_name=item['name'],
+                        lot=item['lot'],
+                        quantity=item['quantity'],
+                    )
+                    for item in normalized_items
+                ])
+
+            total_lot = sum(item['lot'] for item in normalized_items)
+            total_qty = sum(item['quantity'] for item in normalized_items)
+            return JsonResponse({
+                'status': 'success',
+                'order': {
+                    'id': order.id,
+                    'manufacturer': order.manufacturer,
+                    'order_date': parsed_order_date.strftime('%Y-%m-%d'),
+                    'created_at': _format_stock_order_created_at(order.created_at),
+                    'items': [
+                        {
+                            'name': item['name'],
+                            'lot': item['lot'],
+                            'quantity': item['quantity'],
+                        }
+                        for item in normalized_items
+                    ],
+                    'total_lot': total_lot,
+                    'total_qty': total_qty,
+                },
+            })
+        except Exception as exc:
+            return JsonResponse({'status': 'error', 'message': f'Unable to save stock order due to a server error: {exc}'}, status=500)
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+
+@login_required
+def stock_order_history(request):
+    if not request.user.is_staff:
+        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
+    if request.method != 'GET':
+        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
+
+    orders_qs = StockOrder.objects.prefetch_related('items').order_by('-created_at')
+    manufacturer_filter = (request.GET.get('manufacturer') or '').strip()
+    if manufacturer_filter:
+        orders_qs = orders_qs.filter(manufacturer=manufacturer_filter)
+    orders_qs = orders_qs[:100]
+
+    orders_payload = []
+    for order in orders_qs:
+        items_payload = []
+        total_lot = 0
+        total_qty = 0
+        for item in order.items.all().order_by('id'):
+            items_payload.append({
+                'name': item.kulfi_name,
+                'lot': item.lot,
+                'quantity': item.quantity,
+            })
+            total_lot += item.lot
+            total_qty += item.quantity
+
+        orders_payload.append({
+            'id': order.id,
+            'manufacturer': order.manufacturer,
+            'order_date': order.order_date.strftime('%Y-%m-%d'),
+            'created_at': _format_stock_order_created_at(order.created_at),
+            'items': items_payload,
+            'total_lot': total_lot,
+            'total_qty': total_qty,
+        })
+
+    return JsonResponse({'status': 'success', 'orders': orders_payload})
+
+
+@csrf_exempt
+@login_required
+def delete_stock_order(request, order_id):
+    if not request.user.is_staff:
+        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
+    if request.method not in ('POST', 'DELETE'):
+        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
+    order = get_object_or_404(StockOrder, id=order_id)
+    order.delete()
+    return JsonResponse({'status': 'success'})
 from django.views.decorators.http import require_POST
 from django.core.mail import send_mail
 import json
