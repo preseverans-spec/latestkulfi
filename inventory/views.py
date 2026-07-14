@@ -2596,21 +2596,32 @@ def view_sales(request):
     previous_date = selected_date - timedelta(days=1)
     next_date = selected_date + timedelta(days=1)
 
-    salespeople = User.objects.filter(
-        id__in=Sales.objects.filter(
-            sale_date=selected_date,
-            recorded_by__isnull=False,
-        ).values_list('recorded_by_id', flat=True).distinct()
-    ).order_by('first_name', 'username')
+    salesperson_ids_for_date = Sales.objects.filter(
+        sale_date=selected_date,
+        recorded_by__isnull=False,
+    ).values_list('recorded_by_id', flat=True).distinct()
 
+    selected_salesperson_int = None
     salesperson_filter = None
     if selected_salesperson_id:
         try:
-            salesperson_filter = salespeople.get(pk=int(selected_salesperson_id))
-        except (ValueError, User.DoesNotExist):
+            selected_salesperson_int = int(selected_salesperson_id)
+            salesperson_filter = User.objects.filter(pk=selected_salesperson_int).first()
+            if not salesperson_filter:
+                selected_salesperson_id = ''
+                if date_submitted:
+                    messages.warning(request, 'Selected salesperson was not found.')
+        except ValueError:
             selected_salesperson_id = ''
             if date_submitted:
-                messages.warning(request, 'Selected salesperson was not found for this date.')
+                messages.warning(request, 'Selected salesperson was not found.')
+
+    salespeople_filter = Q(id__in=salesperson_ids_for_date)
+    if selected_salesperson_int and salesperson_filter:
+        # Keep selected salesperson visible in dropdown even if their sales were just deleted.
+        salespeople_filter |= Q(id=selected_salesperson_int)
+
+    salespeople = User.objects.filter(salespeople_filter).order_by('first_name', 'username')
 
     if date_submitted:
         # Get sales for the selected date and group by product name.
@@ -2806,7 +2817,7 @@ def delete_grouped_sale(request):
 @login_required
 @require_POST
 def delete_sales_for_date(request):
-    """Delete all sales recorded on a selected date and rebuild current stock."""
+    """Delete sales recorded on a selected date (optionally by salesperson) and rebuild current stock."""
     if not request.user.is_staff:
         messages.error(request, 'You do not have permission to delete sales.')
         return redirect('view_sales')
@@ -2825,6 +2836,20 @@ def delete_sales_for_date(request):
         return redirect('view_sales')
 
     sales_qs = Sales.objects.filter(sale_date=selected_date)
+
+    salesperson_name = ''
+    if selected_salesperson_id:
+        try:
+            salesperson_id = int(selected_salesperson_id)
+        except ValueError:
+            messages.error(request, 'Invalid salesperson for deletion.')
+            return redirect(f"{reverse('view_sales')}?{urlencode({'date': selected_date.isoformat()})}")
+
+        sales_qs = sales_qs.filter(recorded_by_id=salesperson_id)
+        salesperson = User.objects.filter(id=salesperson_id).first()
+        if salesperson:
+            salesperson_name = salesperson.get_full_name() or salesperson.username
+
     sale_ids = list(sales_qs.values_list('id', flat=True))
 
     if not sale_ids:
@@ -2840,10 +2865,21 @@ def delete_sales_for_date(request):
             Sales.objects.filter(id__in=sale_ids).delete()
             _recalculate_current_stock_for_products(touched_product_ids)
 
-        messages.success(
-            request,
-            f'Deleted all {deleted_entries} sales entries on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated.'
-        )
+        if salesperson_name:
+            messages.success(
+                request,
+                f"Deleted {deleted_entries} sales entries for {salesperson_name} on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated."
+            )
+        elif selected_salesperson_id:
+            messages.success(
+                request,
+                f"Deleted {deleted_entries} sales entries for the selected salesperson on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated."
+            )
+        else:
+            messages.success(
+                request,
+                f'Deleted all {deleted_entries} sales entries on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated.'
+            )
 
     query_params = {'date': selected_date.isoformat()}
     if selected_salesperson_id:

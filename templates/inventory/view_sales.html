@@ -115,11 +115,11 @@
                 </h5>
                 <div class="d-flex gap-2">
                     {% if daily_sales %}
-                    <form method="POST" action="{% url 'delete_sales_for_date' %}" class="d-inline" onsubmit="return confirm('Delete all sales recorded on {{ selected_date|date:'Y-m-d' }} and recalculate inventory?');">
+                    <form method="POST" action="{% url 'delete_sales_for_date' %}" class="d-inline" onsubmit="return confirm('{% if selected_salesperson %}Delete sales for {{ selected_salesperson.get_full_name|default:selected_salesperson.username|escapejs }} on {{ selected_date|date:'Y-m-d' }} and recalculate inventory?{% else %}Delete all sales recorded on {{ selected_date|date:'Y-m-d' }} and recalculate inventory?{% endif %}');">
                         {% csrf_token %}
                         <input type="hidden" name="selected_date" value="{{ selected_date|date:'Y-m-d' }}">
                         <input type="hidden" name="selected_salesperson_id" value="{{ selected_salesperson_id }}">
-                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete all sales for this date">
+                        <button type="submit" class="btn btn-outline-danger btn-sm" title="{% if selected_salesperson %}Delete selected salesperson sales for this date{% else %}Delete all sales for this date{% endif %}">
                             <i class="fas fa-trash-alt"></i>
                         </button>
                     </form>
