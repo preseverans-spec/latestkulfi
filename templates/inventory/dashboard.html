@@ -3,15 +3,37 @@
 {% block title %}Dashboard - Kulfi Inventory{% endblock %}
 
 {% block content %}
-<h1 class="page-title"><i class="fas fa-chart-line"></i> Dashboard</h1>
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+    <h1 class="page-title mb-0"><i class="fas fa-chart-line"></i> Dashboard - {{ selected_date|date:"M d, Y" }}</h1>
+    <div class="d-flex align-items-center gap-2">
+        <form method="get" action="{% url 'dashboard' %}" class="d-flex align-items-center gap-2">
+            <input
+                type="date"
+                name="date"
+                value="{{ selected_date_iso }}"
+                class="form-control form-control-sm"
+                aria-label="Select dashboard date"
+            >
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Go</button>
+        </form>
+        <div class="btn-group" role="group" aria-label="Date navigation">
+            <a href="{% url 'dashboard' %}?date={{ prev_date_iso }}" class="btn btn-outline-secondary btn-sm">
+                <i class="fas fa-chevron-left"></i> Prev
+            </a>
+            <a href="{% url 'dashboard' %}?date={{ next_date_iso }}" class="btn btn-outline-secondary btn-sm">
+                Next <i class="fas fa-chevron-right"></i>
+            </a>
+        </div>
+    </div>
+</div>
 
 <!-- Key Metrics Row -->
 <div class="row mb-4">
     <div class="col-md-3 mb-3">
         <div class="card stat-card">
-            <h6>Today's Sales</h6>
+            <h6>Total Quantity Sold</h6>
             <div class="stat-value">{{ total_today_sales }}</div>
-            <small class="text-muted">transactions</small>
+            <small class="text-muted">units on selected date</small>
         </div>
     </div>
     
@@ -27,7 +49,15 @@
         <div class="card stat-card">
             <h6>Total Revenue</h6>
             <div class="stat-value">₹{{ total_today_revenue }}</div>
-            <small class="text-muted">today</small>
+            <small class="text-muted">selected date</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>COGS</h6>
+            <div class="stat-value">₹{{ total_today_cogs|floatformat:2 }}</div>
+            <small class="text-muted">cost of goods sold</small>
         </div>
     </div>
     
@@ -35,7 +65,7 @@
         <div class="card stat-card">
             <h6>Operation Cost</h6>
             <div class="stat-value">₹{{ total_today_operation_cost|floatformat:2 }}</div>
-            <small class="text-muted">today</small>
+            <small class="text-muted">selected date</small>
         </div>
     </div>
 
@@ -43,7 +73,15 @@
         <div class="card stat-card">
             <h6>Net Profit</h6>
             <div class="stat-value">₹{{ total_today_net_profit|floatformat:2 }}</div>
-            <small class="text-muted">after operations</small>
+            <small class="text-muted">(Revenue - COGS) - Op Cost</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Revenue - Op Cost</h6>
+            <div class="stat-value">₹{{ total_today_revenue_after_operations|floatformat:2 }}</div>
+            <small class="text-muted">Revenue - Op Cost</small>
         </div>
     </div>
 </div>
@@ -76,10 +114,14 @@
     <!-- Sales Trend -->
     <div class="col-lg-6 mb-4">
         <div class="card">
-            <div class="card-header" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
+            <div class="card-header d-flex justify-content-between align-items-center" style="background: linear-gradient(90deg, #E63946 0%, #c0303b 100%); color: white !important;">
                 <h5 class="mb-0" style="color: white !important;"><i class="fas fa-chart-area" style="color: white !important;"></i> 7-Day Sales Trend</h5>
+                <button id="trendToggleBtn" type="button" class="btn btn-sm btn-light" title="Switch graph" aria-label="Switch graph">
+                    <i class="fas fa-arrow-right"></i>
+                </button>
             </div>
             <div class="card-body">
+                <div id="trendModeLabel" class="small text-muted mb-2">View: Quantity Sold + Revenue</div>
                 <canvas id="salesChart" height="100"></canvas>
             </div>
         </div>
@@ -168,31 +210,112 @@
     // Sales Trend Chart
     const ctx = document.getElementById('salesChart').getContext('2d');
     const salesData = {{ last_7_days_sales|safe }};
-    
-    new Chart(ctx, {
+
+    const trendDatasets = {
+        quantityRevenue: [
+            {
+                label: 'Quantity Sold',
+                data: salesData.map(d => d.quantity),
+                borderColor: '#AE6F1D',
+                backgroundColor: 'rgba(174, 111, 29, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Revenue (₹)',
+                data: salesData.map(d => d.revenue),
+                borderColor: '#27ae60',
+                backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y1'
+            }
+        ],
+        finance: [
+            {
+                label: 'Revenue (₹)',
+                data: salesData.map(d => d.revenue),
+                borderColor: '#27ae60',
+                backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'COGS (₹)',
+                data: salesData.map(d => d.cogs),
+                borderColor: '#f39c12',
+                backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Op Expense (₹)',
+                data: salesData.map(d => d.op_expense),
+                borderColor: '#e74c3c',
+                backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Net Profit (₹)',
+                data: salesData.map(d => d.net_profit),
+                borderColor: '#2980b9',
+                backgroundColor: 'rgba(41, 128, 185, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            }
+        ]
+    };
+
+    const trendScales = {
+        quantityRevenue: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                title: {
+                    display: true,
+                    text: 'Quantity Sold'
+                }
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                title: {
+                    display: true,
+                    text: 'Revenue (₹)'
+                },
+                grid: {
+                    drawOnChartArea: false,
+                },
+            }
+        },
+        finance: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                title: {
+                    display: true,
+                    text: 'Amount (₹)'
+                }
+            }
+        }
+    };
+
+    let currentTrendMode = 'quantityRevenue';
+
+    const salesChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: salesData.map(d => d.date),
-            datasets: [
-                {
-                    label: 'Sales Count',
-                    data: salesData.map(d => d.sales),
-                    borderColor: '#AE6F1D',
-                    backgroundColor: 'rgba(174, 111, 29, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    yAxisID: 'y'
-                },
-                {
-                    label: 'Revenue (₹)',
-                    data: salesData.map(d => d.revenue),
-                    borderColor: '#27ae60',
-                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    yAxisID: 'y1'
-                }
-            ]
+            datasets: trendDatasets.quantityRevenue
         },
         options: {
             responsive: true,
@@ -200,30 +323,26 @@
                 mode: 'index',
                 intersect: false,
             },
-            scales: {
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: {
-                        display: true,
-                        text: 'Sales Count'
-                    }
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    title: {
-                        display: true,
-                        text: 'Revenue (₹)'
-                    },
-                    grid: {
-                        drawOnChartArea: false,
-                    },
-                }
-            }
+            scales: trendScales.quantityRevenue
         }
+    });
+
+    const trendToggleBtn = document.getElementById('trendToggleBtn');
+    const trendModeLabel = document.getElementById('trendModeLabel');
+
+    function applyTrendMode(mode) {
+        currentTrendMode = mode;
+        salesChart.data.datasets = trendDatasets[mode];
+        salesChart.options.scales = trendScales[mode];
+        trendModeLabel.textContent = mode === 'quantityRevenue'
+            ? 'View: Quantity Sold + Revenue'
+            : 'View: Revenue + COGS + Op Expense + Net Profit';
+        salesChart.update();
+    }
+
+    trendToggleBtn.addEventListener('click', function() {
+        const nextMode = currentTrendMode === 'quantityRevenue' ? 'finance' : 'quantityRevenue';
+        applyTrendMode(nextMode);
     });
 </script>
 {% endblock %}

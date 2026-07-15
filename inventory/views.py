@@ -342,20 +342,33 @@ def logout_view(request):
 @login_required
 def dashboard(request):
     """Main dashboard showing today's sales, revenue, and low stock alerts"""
-    today = timezone.now().date()
+    today = timezone.localdate()
+    selected_date = today
+    selected_date_raw = (request.GET.get('date') or '').strip()
+    if selected_date_raw:
+        try:
+            selected_date = date.fromisoformat(selected_date_raw)
+        except ValueError:
+            selected_date = today
+    prev_date = selected_date - timedelta(days=1)
+    next_date = selected_date + timedelta(days=1)
     
     # Today's sales
-    today_sales = Sales.objects.filter(sale_date=today)
-    total_today_sales = today_sales.count()
+    today_sales = Sales.objects.filter(sale_date=selected_date)
+    total_today_sales = today_sales.aggregate(
+        total=Coalesce(Sum('quantity'), 0)
+    )['total']
     total_today_revenue = today_sales.aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
     
     # Gross profit from sales only.
     total_today_profit = sum(sale.get_profit() for sale in today_sales)
-    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=today).aggregate(
+    total_today_cogs = total_today_revenue - total_today_profit
+    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
+    total_today_revenue_after_operations = total_today_revenue - total_today_operation_cost
     total_today_net_profit = total_today_profit - total_today_operation_cost
     
     # Total stock across active products only
@@ -382,29 +395,48 @@ def dashboard(request):
     # Weekly sales trend (last 7 days)
     last_7_days_sales = []
     for i in range(6, -1, -1):
-        date_temp = today - timedelta(days=i)
-        sales_count = Sales.objects.filter(sale_date=date_temp).count()
-        revenue = Sales.objects.filter(sale_date=date_temp).aggregate(
+        date_temp = selected_date - timedelta(days=i)
+        day_sales = Sales.objects.filter(sale_date=date_temp).select_related('product')
+        quantity_sold = day_sales.aggregate(
+            total=Coalesce(Sum('quantity'), 0)
+        )['total']
+        revenue = day_sales.aggregate(
             total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
         )['total']
+        gross_profit = sum(sale.get_profit() for sale in day_sales)
+        operation_cost = OperationsExpense.objects.filter(operation_date=date_temp).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        cogs = revenue - gross_profit
+        net_profit = gross_profit - operation_cost
         last_7_days_sales.append({
             'date': date_temp.strftime('%m/%d'),
-            'sales': sales_count,
-            'revenue': float(revenue)
+            'quantity': quantity_sold,
+            'revenue': float(revenue),
+            'cogs': float(cogs),
+            'op_expense': float(operation_cost),
+            'net_profit': float(net_profit),
         })
     
     # Top products (by sales count)
     top_products = Product.objects.annotate(
-        sale_count=Count('sales')
-    ).order_by('-sale_count')[:5]
+        sale_count=Count('sales', filter=Q(sales__sale_date=selected_date))
+    ).filter(sale_count__gt=0).order_by('-sale_count')[:5]
     
     context = {
         'total_stock': total_stock,
         'total_today_sales': total_today_sales,
         'total_today_revenue': total_today_revenue,
         'total_today_profit': total_today_profit,
+        'total_today_cogs': total_today_cogs,
         'total_today_operation_cost': total_today_operation_cost,
+        'total_today_revenue_after_operations': total_today_revenue_after_operations,
         'total_today_net_profit': total_today_net_profit,
+        'selected_date': selected_date,
+        'selected_date_iso': selected_date.isoformat(),
+        'prev_date_iso': prev_date.isoformat(),
+        'next_date_iso': next_date.isoformat(),
+        'is_today': selected_date == today,
         'low_stock_count': low_stock_products.count(),
         'low_stock_products': low_stock_products[:5],
         'last_7_days_sales': last_7_days_sales,
