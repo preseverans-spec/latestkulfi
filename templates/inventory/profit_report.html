@@ -85,9 +85,6 @@
                     <i class="fas fa-print"></i> Print
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="{% url 'print_profit_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}" target="_blank">
-                        <i class="fas fa-file-alt"></i> Print (HTML)
-                    </a></li>
                     <li><a class="dropdown-item" href="{% url 'print_profit_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}">
                         <i class="fas fa-file-pdf"></i> Download PDF
                     </a></li>

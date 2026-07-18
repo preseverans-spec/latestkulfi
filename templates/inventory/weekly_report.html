@@ -97,9 +97,6 @@
                     <i class="fas fa-print"></i> Print
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="{% url 'print_weekly_report_html' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}" target="_blank">
-                        <i class="fas fa-file-alt"></i> Print (HTML)
-                    </a></li>
                     <li><a class="dropdown-item" href="{% url 'print_weekly_report_pdf' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}{% if selected_salesperson_id %}&salesperson={{ selected_salesperson_id }}{% endif %}">
                         <i class="fas fa-file-pdf"></i> Download PDF
                     </a></li>

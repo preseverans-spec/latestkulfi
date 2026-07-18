@@ -66,9 +66,6 @@
                 <i class="fas fa-print"></i> Print
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
-                <li><a class="dropdown-item" href="{% url 'print_expenses_html' %}{% if qs %}?{{ qs }}{% endif %}" target="_blank">
-                    <i class="fas fa-file-alt"></i> Print (HTML)
-                </a></li>
                 <li><a class="dropdown-item" href="{% url 'print_expenses_pdf' %}{% if qs %}?{{ qs }}{% endif %}">
                     <i class="fas fa-file-pdf"></i> Download PDF
                 </a></li>

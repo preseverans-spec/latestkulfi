@@ -3591,6 +3591,12 @@ def _build_daily_report_context(selected_date):
     )['total']
     net_profit = total_profit - total_operation_cost
 
+    # Total quantity sold for the day
+    total_quantity = sales_qs.aggregate(total=Coalesce(Sum('quantity'), 0, output_field=DecimalField()))['total']
+
+    # Revenue minus operation cost (requested card)
+    revenue_minus_operation_cost = total_revenue - total_operation_cost
+
     # Calculate total stock as of selected date
     products = Product.objects.filter(is_active=True)
     stock_map = get_stock_as_of_date_map(products, selected_date)
@@ -3601,10 +3607,13 @@ def _build_daily_report_context(selected_date):
         'sales': sales,
         'total_revenue': total_revenue,
         'total_cost': total_cost,
+        'total_cogs': total_cost,
         'total_profit': total_profit,
         'total_operation_cost': total_operation_cost,
+        'revenue_minus_operation_cost': revenue_minus_operation_cost,
         'net_profit': net_profit,
         'total_transactions': len(sales),
+        'total_quantity': total_quantity,
         'total_stock': total_stock,
         'total_combined_stock_taken': total_combined_stock_taken,
     }
@@ -3659,6 +3668,7 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         daily_net_profit = daily_revenue - daily_cogs - daily_operation_cost
 
         daily_data[current_date.strftime('%a, %m/%d')] = {
+            'count': daily_sales.count(),
             'quantity': daily_quantity,
             'revenue': daily_revenue,
             'cogs': daily_cogs,
@@ -3705,6 +3715,8 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         'total_quantity': total_quantity,
         'total_revenue': total_revenue,
         'total_cogs': total_cost,
+        # legacy key used by templates and export handlers
+        'total_cost': total_cost,
         'total_profit': total_profit,
         'total_operation_cost': total_operation_cost,
         'total_net_profit': total_net_profit,
@@ -4548,12 +4560,12 @@ def print_daily_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Transactions:</b> {context['total_transactions']} | "
-            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
-            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
-            f"<b>Profit:</b> Rs.{context['total_profit']:.2f} | "
-            f"<b>Operation Cost:</b> Rs.{context['total_operation_cost']:.2f} | "
-            f"<b>Net Profit:</b> Rs.{context['net_profit']:.2f}"
+            f"<b>Total Quantity Sold:</b> {context.get('total_quantity', 0)} | "
+            f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
+            f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
+            f"<b>Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
+            f"<b>Revenue - Op Cost:</b> Rs.{context.get('revenue_minus_operation_cost', 0):.2f} | "
+            f"<b>Net Profit:</b> Rs.{context.get('net_profit', 0):.2f}"
         )
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
@@ -4629,12 +4641,14 @@ def print_daily_report_excel(request):
         ws['A1'] = f"DAILY REPORT - {selected_date.strftime('%d %B %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
 
-        ws['A3'] = f"Transactions: {context['total_transactions']}"
-        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
-        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
-        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
-        ws['A7'] = f"Operation Cost: {context['total_operation_cost']:.2f}"
-        ws['A8'] = f"Net Profit: {context['net_profit']:.2f}"
+        # Summary cards: total quantity, revenue, cogs, operation cost, revenue - op cost, net profit
+        ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
+        ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
+        # prefer 'total_cogs' but fall back to 'total_cost' for compatibility
+        ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
+        ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
+        ws['A7'] = f"Revenue - Op Cost: Rs.{context.get('revenue_minus_operation_cost', 0):.2f}"
+        ws['A8'] = f"Net Profit: Rs.{context.get('net_profit', 0):.2f}"
 
         headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit']
         for col, header in enumerate(headers, 1):
@@ -4745,10 +4759,11 @@ def print_weekly_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Transactions:</b> {context['total_transactions']} | "
-            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
-            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
-            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
+            f"<b>Total Quantity Sold:</b> {context.get('total_quantity', 0)} | "
+            f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
+            f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
+            f"<b>Total Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
+            f"<b>Total Net Profit:</b> Rs.{context.get('total_net_profit', 0):.2f}"
         )
         if selected_salesperson is not None:
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
@@ -4757,16 +4772,19 @@ def print_weekly_report_pdf(request):
         elements.append(Spacer(1, 0.2 * inch))
 
         elements.append(Paragraph('<b>Daily Breakdown</b>', styles['Heading3']))
-        daily_data = [['Date', 'Transactions', 'Quantity Sold', 'Revenue']]
+        # Daily breakdown: Date, Quantity Sold, Revenue, COGS, Operation Cost, Net Profit
+        daily_data = [['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Operation Cost', 'Net Profit']]
         for day, row in context['daily_data'].items():
             daily_data.append([
                 day,
-                str(row['count']),
-                f"{Decimal(row['quantity']):.0f}",
-                f"Rs.{row['revenue']:.2f}",
+                f"{Decimal(row.get('quantity', 0)):.0f}",
+                f"Rs.{row.get('revenue', Decimal('0.0')):.2f}",
+                f"Rs.{row.get('cogs', Decimal('0.0')):.2f}",
+                f"Rs.{row.get('operation_cost', Decimal('0.0')):.2f}",
+                f"Rs.{row.get('net_profit', Decimal('0.0')):.2f}",
             ])
 
-        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.2 * inch, 1.3 * inch])
+        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.1 * inch, 1.1 * inch, 1.2 * inch, 1.2 * inch])
         daily_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -4853,16 +4871,19 @@ def print_weekly_report_excel(request):
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
             ws['A2'] = f"Salesperson: {salesperson_name}"
 
-        ws['A3'] = f"Transactions: {context['total_transactions']}"
-        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
-        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
-        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+        # Summary cards: total quantity, revenue, cogs, operation cost, net profit
+        ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
+        ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
+        ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
+        ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
+        ws['A7'] = f"Total Net Profit: Rs.{context.get('total_net_profit', 0):.2f}"
 
-        ws['A8'] = 'Daily Breakdown'
-        ws['A8'].font = Font(bold=True)
+        ws['A9'] = 'Daily Breakdown'
+        ws['A9'].font = Font(bold=True)
 
-        daily_headers = ['Date', 'Transactions', 'Quantity Sold', 'Revenue']
-        daily_header_row = 9
+        # Daily breakdown: Date, Quantity Sold, Revenue, COGS, Operation Cost, Net Profit
+        daily_headers = ['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Operation Cost', 'Net Profit']
+        daily_header_row = 10
         for col, header in enumerate(daily_headers, 1):
             cell = ws.cell(row=daily_header_row, column=col)
             cell.value = header
@@ -4873,9 +4894,16 @@ def print_weekly_report_excel(request):
         row = daily_header_row + 1
         for day, data in context['daily_data'].items():
             ws.cell(row=row, column=1).value = day
-            ws.cell(row=row, column=2).value = int(data['count'])
-            ws.cell(row=row, column=3).value = int(data['quantity'])
-            ws.cell(row=row, column=4).value = float(data['revenue'])
+            ws.cell(row=row, column=2).value = float(data.get('quantity', 0))
+            ws.cell(row=row, column=3).value = float(data.get('revenue', 0))
+            ws.cell(row=row, column=4).value = float(data.get('cogs', 0))
+            ws.cell(row=row, column=5).value = float(data.get('operation_cost', 0))
+            ws.cell(row=row, column=6).value = float(data.get('net_profit', 0))
+            # apply number formats for currency columns
+            ws.cell(row=row, column=3).number_format = '₹#,##0.00'
+            ws.cell(row=row, column=4).number_format = '₹#,##0.00'
+            ws.cell(row=row, column=5).number_format = '₹#,##0.00'
+            ws.cell(row=row, column=6).number_format = '₹#,##0.00'
             row += 1
 
         row += 1

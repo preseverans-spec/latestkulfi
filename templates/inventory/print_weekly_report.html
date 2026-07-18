@@ -57,10 +57,11 @@
     </div>
 
     <div class="summary">
-        <div class="summary-item"><div class="label">Transactions</div><div class="value">{{ total_transactions }}</div></div>
+        <div class="summary-item"><div class="label">Quantity Sold</div><div class="value">{{ total_quantity }}</div></div>
         <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Cost</div><div class="value">Rs.{{ total_cost|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Profit</div><div class="value">Rs.{{ total_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">COGS</div><div class="value">Rs.{{ total_cogs|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Operation Cost</div><div class="value">Rs.{{ total_operation_cost|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Net Profit</div><div class="value">Rs.{{ total_net_profit|floatformat:2 }}</div></div>
     </div>
 
     <h3 class="section-title">Daily Breakdown</h3>
