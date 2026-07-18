@@ -133,31 +133,38 @@
 {% else %}
 <!-- Summary Cards -->
 <div class="row mb-4">
-    <div class="col-md-3 mb-3">
+    <div class="col-md-2 mb-3">
         <div class="card stat-card">
-            <h6>Total Transactions</h6>
-            <div class="stat-value">{{ total_transactions }}</div>
+            <h6>Total Quantity Sold</h6>
+            <div class="stat-value">{{ total_quantity }}</div>
         </div>
     </div>
-    
-    <div class="col-md-3 mb-3">
+
+    <div class="col-md-2 mb-3">
         <div class="card stat-card">
             <h6>Total Revenue</h6>
-            <div class="stat-value">₹{{ total_revenue }}</div>
+            <div class="stat-value">₹{{ total_revenue|floatformat:2 }}</div>
         </div>
     </div>
-    
+
+    <div class="col-md-2 mb-3">
+        <div class="card stat-card">
+            <h6>Total COGS</h6>
+            <div class="stat-value">₹{{ total_cogs|floatformat:2 }}</div>
+        </div>
+    </div>
+
     <div class="col-md-3 mb-3">
         <div class="card stat-card">
-            <h6>Total Cost</h6>
-            <div class="stat-value">₹{{ total_cost|floatformat:2 }}</div>
+            <h6>Total Operation Cost</h6>
+            <div class="stat-value">₹{{ total_operation_cost|floatformat:2 }}</div>
         </div>
     </div>
-    
+
     <div class="col-md-3 mb-3">
         <div class="card stat-card" style="border-left-color: #27ae60;">
-            <h6>Total Profit</h6>
-            <div class="stat-value" style="color: #27ae60;">₹{{ total_profit|floatformat:2 }}</div>
+            <h6>Total Net Profit</h6>
+            <div class="stat-value" style="color: #27ae60;">₹{{ total_net_profit|floatformat:2 }}</div>
         </div>
     </div>
 </div>
@@ -172,18 +179,22 @@
             <thead class="table-light">
                 <tr>
                     <th>Date</th>
-                    <th>Transactions</th>
                     <th>Quantity Sold</th>
                     <th>Revenue</th>
+                    <th>COGS</th>
+                    <th>Operation Cost</th>
+                    <th>Net Profit</th>
                 </tr>
             </thead>
             <tbody>
                 {% for date, data in daily_data.items %}
                 <tr>
                     <td><strong>{{ date }}</strong></td>
-                    <td>{{ data.count }}</td>
                     <td>{{ data.quantity|floatformat:0 }}</td>
-                    <td>₹{{ data.revenue }}</td>
+                    <td>₹{{ data.revenue|floatformat:2 }}</td>
+                    <td>₹{{ data.cogs|floatformat:2 }}</td>
+                    <td>₹{{ data.operation_cost|floatformat:2 }}</td>
+                    <td>₹{{ data.net_profit|floatformat:2 }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

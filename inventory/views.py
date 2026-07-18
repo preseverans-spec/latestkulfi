@@ -3622,21 +3622,48 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
 
+    total_quantity = sales.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+    )['total']
+
     total_cost = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in sales)
     total_profit = total_revenue - total_cost
+
+    total_operation_cost = OperationsExpense.objects.filter(
+        operation_date__gte=start_date,
+        operation_date__lte=end_date,
+    ).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    total_net_profit = total_profit - total_operation_cost
 
     daily_data = {}
     for i in range((end_date - start_date).days + 1):
         current_date = start_date + timedelta(days=i)
         daily_sales = sales.filter(sale_date=current_date)
+        daily_quantity = daily_sales.aggregate(
+            total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+        )['total']
+        daily_revenue = daily_sales.aggregate(
+            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+        )['total']
+        daily_cogs = sum(
+            Decimal(sale.quantity) * sale.product.cost_price for sale in daily_sales
+        )
+        daily_operation_cost = OperationsExpense.objects.filter(
+            operation_date=current_date
+        ).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        daily_net_profit = daily_revenue - daily_cogs - daily_operation_cost
+
         daily_data[current_date.strftime('%a, %m/%d')] = {
-            'count': daily_sales.count(),
-            'quantity': daily_sales.aggregate(
-                total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
-            )['total'],
-            'revenue': daily_sales.aggregate(
-                total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
-            )['total']
+            'quantity': daily_quantity,
+            'revenue': daily_revenue,
+            'cogs': daily_cogs,
+            'operation_cost': daily_operation_cost,
+            'net_profit': daily_net_profit,
         }
 
     weekly_product_breakdown_map = {}
@@ -3675,9 +3702,12 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
     return {
         'start_date': start_date,
         'end_date': end_date,
+        'total_quantity': total_quantity,
         'total_revenue': total_revenue,
-        'total_cost': total_cost,
+        'total_cogs': total_cost,
         'total_profit': total_profit,
+        'total_operation_cost': total_operation_cost,
+        'total_net_profit': total_net_profit,
         'total_transactions': sales.count(),
         'daily_data': daily_data,
         'weekly_product_breakdown': weekly_product_breakdown,
@@ -3980,10 +4010,12 @@ def weekly_report(request):
         context = {
             'start_date': '',
             'end_date': '',
-            'total_transactions': 0,
+            'total_quantity': 0,
             'total_revenue': 0,
-            'total_cost': 0,
-            'total_profit': 0,
+            'total_cogs': 0,
+            'total_operation_cost': 0,
+            'total_net_profit': 0,
+            'total_transactions': 0,
             'daily_data': OrderedDict(),
             'weekly_product_breakdown': [],
             'no_filter': True,
