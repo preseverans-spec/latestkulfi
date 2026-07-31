@@ -71,9 +71,17 @@
 
     <div class="col-md-3 mb-3">
         <div class="card stat-card">
+            <h6>Operation Income</h6>
+            <div class="stat-value">₹{{ total_today_operation_income|floatformat:2 }}</div>
+            <small class="text-muted">selected date</small>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
+        <div class="card stat-card">
             <h6>Net Profit</h6>
             <div class="stat-value">₹{{ total_today_net_profit|floatformat:2 }}</div>
-            <small class="text-muted">(Revenue - COGS) - Op Cost</small>
+            <small class="text-muted">(Revenue - COGS) - Op Cost + Op Income</small>
         </div>
     </div>
 
@@ -256,6 +264,15 @@
                 data: salesData.map(d => d.op_expense),
                 borderColor: '#e74c3c',
                 backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Op Income (₹)',
+                data: salesData.map(d => d.operation_income),
+                borderColor: '#2ecc71',
+                backgroundColor: 'rgba(46, 204, 113, 0.1)',
                 tension: 0.4,
                 fill: true,
                 yAxisID: 'y'

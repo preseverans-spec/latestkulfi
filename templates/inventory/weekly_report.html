@@ -159,9 +159,17 @@
     </div>
 
     <div class="col-md-3 mb-3">
+        <div class="card stat-card">
+            <h6>Total Operation Income</h6>
+            <div class="stat-value">₹{{ total_operation_income|floatformat:2 }}</div>
+        </div>
+    </div>
+
+    <div class="col-md-3 mb-3">
         <div class="card stat-card" style="border-left-color: #27ae60;">
             <h6>Total Net Profit</h6>
             <div class="stat-value" style="color: #27ae60;">₹{{ total_net_profit|floatformat:2 }}</div>
+            <small class="text-muted">(Revenue - COGS) - Op Cost + Op Income</small>
         </div>
     </div>
 </div>

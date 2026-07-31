@@ -368,8 +368,11 @@ def dashboard(request):
     total_today_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
+    total_today_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
     total_today_revenue_after_operations = total_today_revenue - total_today_operation_cost
-    total_today_net_profit = total_today_profit - total_today_operation_cost
+    total_today_net_profit = total_today_profit - total_today_operation_cost + total_today_operation_income
     
     # Total stock across active products only
     total_stock = Product.objects.filter(is_active=True).aggregate(
@@ -407,14 +410,18 @@ def dashboard(request):
         operation_cost = OperationsExpense.objects.filter(operation_date=date_temp).aggregate(
             total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
         )['total']
+        operation_income = OperationsIncome.objects.filter(income_date=date_temp).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
         cogs = revenue - gross_profit
-        net_profit = gross_profit - operation_cost
+        net_profit = gross_profit - operation_cost + operation_income
         last_7_days_sales.append({
             'date': date_temp.strftime('%m/%d'),
             'quantity': quantity_sold,
             'revenue': float(revenue),
             'cogs': float(cogs),
             'op_expense': float(operation_cost),
+            'operation_income': float(operation_income),
             'net_profit': float(net_profit),
         })
     
@@ -430,6 +437,7 @@ def dashboard(request):
         'total_today_profit': total_today_profit,
         'total_today_cogs': total_today_cogs,
         'total_today_operation_cost': total_today_operation_cost,
+        'total_today_operation_income': total_today_operation_income,
         'total_today_revenue_after_operations': total_today_revenue_after_operations,
         'total_today_net_profit': total_today_net_profit,
         'selected_date': selected_date,
@@ -1981,8 +1989,12 @@ def build_sales_groups(sales_qs, include_date=False):
 
         grouped[group_key]['quantity'] += sale.quantity
         grouped[group_key]['total_price'] += sale.total_price
-        grouped[group_key]['recorded_by'].add(
-            sale.recorded_by.get_full_name() or sale.recorded_by.username
+        if sale.recorded_by is not None:
+            grouped[group_key]['recorded_by'].add(
+                sale.recorded_by.get_full_name() or sale.recorded_by.username
+            )
+        else:
+            grouped[group_key]['recorded_by'].add('-'    if sale.recorded_by is not None else '-'
         )
         if sale.notes:
             grouped[group_key]['notes'].append(sale.notes)
@@ -2238,6 +2250,21 @@ def quick_sales_entry(request):
 
     if request.method == 'POST':
         action = request.POST.get('action', 'record_sales')
+        selected_salesperson_id = (request.POST.get('salesperson') or '').strip()
+        target_salesperson = request.user
+
+        if request.user.is_staff:
+            if selected_salesperson_id:
+                try:
+                    target_salesperson = User.objects.get(
+                        pk=int(selected_salesperson_id),
+                        is_active=True,
+                        is_staff=False,
+                    )
+                except (User.DoesNotExist, ValueError, TypeError):
+                    target_salesperson = request.user
+                    selected_salesperson_id = ''
+                    messages.warning(request, 'Selected salesperson was not found. Recording sales under your account.')
 
         if request.user.is_staff and action == 'save_stock_taken':
             messages.error(request, 'Stock taken entries are only available for sales users.')
@@ -2479,7 +2506,7 @@ def quick_sales_entry(request):
                         quantity=allocated_quantity,
                         unit_price=product.selling_price,
                         sale_date=sale_date,
-                        recorded_by=request.user,
+                        recorded_by=target_salesperson,
                         notes=notes,
                     )
 
@@ -2550,6 +2577,24 @@ def quick_sales_entry(request):
     else:
         selected_sales_date = timezone.now().date()
 
+    selected_salesperson_id = ''
+    selected_salesperson = None
+    salespeople = None
+    if request.user.is_staff:
+        selected_salesperson_id = (request.GET.get('salesperson') or '').strip()
+        salespeople = User.objects.filter(is_staff=False, is_active=True).order_by('first_name', 'username')
+        if selected_salesperson_id:
+            try:
+                selected_salesperson = User.objects.get(
+                    pk=int(selected_salesperson_id),
+                    is_active=True,
+                    is_staff=False,
+                )
+            except (User.DoesNotExist, ValueError, TypeError):
+                selected_salesperson = None
+                selected_salesperson_id = ''
+                messages.warning(request, 'Selected salesperson was not found. Showing your own records.')
+
     grouped_products_for_form = build_grouped_products_for_sales_date(selected_sales_date)
     prefill_from_stock_taken = request.GET.get('prefill_from_stock_taken') == '1'
 
@@ -2598,6 +2643,9 @@ def quick_sales_entry(request):
         'total_stock_taken_for_date': total_stock_taken_for_date,
         'total_combined_stock': total_combined_stock,
         'prefill_from_stock_taken': prefill_from_stock_taken,
+        'salespeople': salespeople,
+        'selected_salesperson_id': selected_salesperson_id,
+        'selected_salesperson': selected_salesperson,
     }
     return render(request, 'inventory/quick_sales_entry.html', context)
 
@@ -3589,7 +3637,10 @@ def _build_daily_report_context(selected_date):
     total_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
-    net_profit = total_profit - total_operation_cost
+    total_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    net_profit = total_profit - total_operation_cost + total_operation_income
 
     # Total quantity sold for the day
     total_quantity = sales_qs.aggregate(total=Coalesce(Sum('quantity'), 0, output_field=DecimalField()))['total']
@@ -3610,6 +3661,7 @@ def _build_daily_report_context(selected_date):
         'total_cogs': total_cost,
         'total_profit': total_profit,
         'total_operation_cost': total_operation_cost,
+        'total_operation_income': total_operation_income,
         'revenue_minus_operation_cost': revenue_minus_operation_cost,
         'net_profit': net_profit,
         'total_transactions': len(sales),
@@ -3645,7 +3697,14 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
 
-    total_net_profit = total_profit - total_operation_cost
+    total_operation_income = OperationsIncome.objects.filter(
+        income_date__gte=start_date,
+        income_date__lte=end_date,
+    ).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+
+    total_net_profit = total_profit - total_operation_cost + total_operation_income
 
     daily_data = {}
     for i in range((end_date - start_date).days + 1):
@@ -3665,7 +3724,12 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         ).aggregate(
             total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
         )['total']
-        daily_net_profit = daily_revenue - daily_cogs - daily_operation_cost
+        daily_operation_income = OperationsIncome.objects.filter(
+            income_date=current_date
+        ).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        daily_net_profit = daily_revenue - daily_cogs - daily_operation_cost + daily_operation_income
 
         daily_data[current_date.strftime('%a, %m/%d')] = {
             'count': daily_sales.count(),
@@ -3673,6 +3737,7 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
             'revenue': daily_revenue,
             'cogs': daily_cogs,
             'operation_cost': daily_operation_cost,
+            'operation_income': daily_operation_income,
             'net_profit': daily_net_profit,
         }
 
@@ -3719,6 +3784,7 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         'total_cost': total_cost,
         'total_profit': total_profit,
         'total_operation_cost': total_operation_cost,
+        'total_operation_income': total_operation_income,
         'total_net_profit': total_net_profit,
         'total_transactions': sales.count(),
         'daily_data': daily_data,
@@ -4563,7 +4629,8 @@ def print_daily_report_pdf(request):
             f"<b>Total Quantity Sold:</b> {context.get('total_quantity', 0)} | "
             f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
             f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
-            f"<b>Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
+            f"<b>Total Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
+            f"<b>Total Operation Income:</b> Rs.{context.get('total_operation_income', 0):.2f} | "
             f"<b>Revenue - Op Cost:</b> Rs.{context.get('revenue_minus_operation_cost', 0):.2f} | "
             f"<b>Net Profit:</b> Rs.{context.get('net_profit', 0):.2f}"
         )
@@ -4641,14 +4708,15 @@ def print_daily_report_excel(request):
         ws['A1'] = f"DAILY REPORT - {selected_date.strftime('%d %B %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
 
-        # Summary cards: total quantity, revenue, cogs, operation cost, revenue - op cost, net profit
+        # Summary cards: total quantity, revenue, cogs, operation cost, operation income, revenue - op cost, net profit
         ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
         ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
         # prefer 'total_cogs' but fall back to 'total_cost' for compatibility
         ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
         ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
-        ws['A7'] = f"Revenue - Op Cost: Rs.{context.get('revenue_minus_operation_cost', 0):.2f}"
-        ws['A8'] = f"Net Profit: Rs.{context.get('net_profit', 0):.2f}"
+        ws['A7'] = f"Total Operation Income: Rs.{context.get('total_operation_income', 0):.2f}"
+        ws['A8'] = f"Revenue - Op Cost: Rs.{context.get('revenue_minus_operation_cost', 0):.2f}"
+        ws['A9'] = f"Net Profit: Rs.{context.get('net_profit', 0):.2f}"
 
         headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit']
         for col, header in enumerate(headers, 1):
@@ -4763,6 +4831,7 @@ def print_weekly_report_pdf(request):
             f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
             f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
             f"<b>Total Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
+            f"<b>Total Operation Income:</b> Rs.{context.get('total_operation_income', 0):.2f} | "
             f"<b>Total Net Profit:</b> Rs.{context.get('total_net_profit', 0):.2f}"
         )
         if selected_salesperson is not None:
@@ -4871,12 +4940,13 @@ def print_weekly_report_excel(request):
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
             ws['A2'] = f"Salesperson: {salesperson_name}"
 
-        # Summary cards: total quantity, revenue, cogs, operation cost, net profit
+        # Summary cards: total quantity, revenue, cogs, operation cost, operation income, net profit
         ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
         ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
         ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
         ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
-        ws['A7'] = f"Total Net Profit: Rs.{context.get('total_net_profit', 0):.2f}"
+        ws['A7'] = f"Total Operation Income: Rs.{context.get('total_operation_income', 0):.2f}"
+        ws['A8'] = f"Total Net Profit: Rs.{context.get('total_net_profit', 0):.2f}"
 
         ws['A9'] = 'Daily Breakdown'
         ws['A9'].font = Font(bold=True)

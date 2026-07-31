@@ -69,6 +69,20 @@
             <input type="date" id="sales_date" name="sales_date" class="form-control" value="{{ selected_sales_date|date:'Y-m-d' }}" required>
             <small class="text-muted">Combined stock shows live current stock.</small>
         </div>
+        {% if user.is_staff %}
+        <div class="col-md-4">
+            <label for="salesperson" class="form-label">Salesperson</label>
+            <select id="salesperson" name="salesperson" class="form-control">
+                <option value="">Record as {{ user.get_full_name|default:user.username }}</option>
+                {% for sp in salespeople %}
+                <option value="{{ sp.id }}" {% if selected_salesperson_id == sp.id|stringformat:'s' %}selected{% endif %}>
+                    {{ sp.get_full_name|default:sp.username }}
+                </option>
+                {% endfor %}
+            </select>
+            <small class="text-muted">Admins can record sales under a selected salesperson account.</small>
+        </div>
+        {% endif %}
         <div class="col-md-8 d-flex align-items-end justify-content-end">
             <a href="{% if user.is_staff %}{% url 'dashboard' %}{% else %}{% url 'quick_sales_entry' %}{% endif %}" class="btn btn-outline-secondary btn-lg me-2"
                onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=this.href; } return false;">
@@ -244,6 +258,20 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // sync each row sale date input when main date changed
+    const salespersonInput = document.getElementById('salesperson');
+
+    function reloadWithFilters() {
+        const dateValue = salesDateInput.value;
+        const url = new URL(window.location.href);
+        url.searchParams.set('sales_date', dateValue);
+        if (salespersonInput && salespersonInput.value) {
+            url.searchParams.set('salesperson', salespersonInput.value);
+        } else {
+            url.searchParams.delete('salesperson');
+        }
+        window.location.href = url.toString();
+    }
+
     salesDateInput.addEventListener('change', function() {
         const dateValue = this.value;
         document.querySelectorAll('.sale-date-value').forEach(function(input) {
@@ -251,10 +279,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Reload page with selected date so combined stock is recalculated as-of that date.
-        const url = new URL(window.location.href);
-        url.searchParams.set('sales_date', dateValue);
-        window.location.href = url.toString();
+        reloadWithFilters();
     });
+    if (salespersonInput) {
+        salespersonInput.addEventListener('change', reloadWithFilters);
+    }
 
     // initial setting for all row sale dates and total values
     document.querySelectorAll('.sale-date-value').forEach(function(input) {
