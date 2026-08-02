@@ -138,6 +138,10 @@
                 {% endfor %}
             </select>
         </div>
+        <div class="col-auto">
+            <label class="form-label mb-1" for="location">Location</label>
+            <input type="text" id="location" class="form-control" placeholder="Enter location" style="min-width:200px;">
+        </div>
     </div>
     <div class="mt-2 text-muted" style="font-size:0.9rem;">
         Lot rule: Pot = 12 Nos per lot. All other flavors = 6 Nos per lot.
@@ -180,10 +184,12 @@
                         '</tr>';
                 });
 
+                const locationLine = d.location ? '<div style="font-size:10pt;color:#555;margin-top:4px;">Location: ' + d.location + '</div>' : '';
                 container.innerHTML =
                     '<div style="text-align:center;margin-bottom:10px;">'
                     + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
                     + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + locationLine
                     + '</div>'
                     + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
                     + '<thead><tr>'
@@ -439,9 +445,11 @@
 
         const manufacturerSelect = document.getElementById('manufacturerSelect');
         const orderDateInput = document.getElementById('orderDate');
+        const locationInput = document.getElementById('location');
         manufacturerSelect.value = order.manufacturer || '';
         showManufacturer(order.manufacturer || '');
         orderDateInput.value = order.order_date || '{{ today }}';
+        locationInput.value = order.location || '';
 
         const lotByName = {};
         (order.items || []).forEach(function(item) {
@@ -601,6 +609,7 @@
     function resetForm() {
         document.getElementById('manufacturerSelect').value = '';
         document.getElementById('orderDate').value = '{{ today }}';
+        document.getElementById('location').value = '';
         editingOrderId = null;
         updateHistoryEditHint();
         const responseMsg = document.getElementById('stockOrderResponseMsg');
@@ -613,6 +622,7 @@
     /* ── Collect current order rows as plain data ── */
     function getOrderData() {
         const manufacturer = getSelectedManufacturer();
+        const location = document.getElementById('location').value || '';
         const lotLabel = 'Lot (Pot=12, Others=6)';
         const printLotLabel = 'Lot';
         const mfgLabel = manufacturer;
@@ -633,7 +643,7 @@
         const totalQtyEl = document.getElementById('orderTotalQty');
 
         return {
-            mfgLabel, lotLabel, printLotLabel, date, rows,
+            mfgLabel, location, lotLabel, printLotLabel, date, rows,
             totalLot: totalLotEl ? totalLotEl.textContent : '0',
             totalQty: totalQtyEl ? totalQtyEl.textContent : '0',
         };
@@ -663,6 +673,7 @@
 
         const payload = {
             manufacturer: d.mfgLabel,
+            location: d.location,
             order_date: d.date,
             items: printableRows.map(function(row) {
                 return {
@@ -709,6 +720,7 @@
                 '<td>' + r.qty + '</td>' +
                 '</tr>';
         });
+        const locationLine = d.location ? '<p>Location: ' + d.location + '</p>' : '';
         const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Stock Order</title>'
             + '<style>'
@@ -726,6 +738,7 @@
             + '<div class="hdr">'
             + '<h2>Stock Order</h2>'
             + '<p>Date: ' + d.date + '</p>'
+            + locationLine
             + '</div>'
             + '<table>'
             + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.printLotLabel + '</th><th>Quantity</th></tr></thead>'
@@ -783,10 +796,12 @@
                 '</tr>';
         });
 
+        const locationLine = d.location ? '<div style="font-size:10pt;color:#555;margin-top:4px;">Location: ' + d.location + '</div>' : '';
         container.innerHTML =
             '<div style="text-align:center;margin-bottom:10px;">'
             + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
             + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+            + locationLine
             + '</div>'
             + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
             + '<thead><tr>'

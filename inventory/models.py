@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 
 class StockOrder(models.Model):
     manufacturer = models.CharField(max_length=100)
+    location = models.CharField(max_length=100, blank=True, default='')
     order_date = models.DateField()
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(get_user_model(), on_delete=models.SET_NULL, null=True, blank=True)

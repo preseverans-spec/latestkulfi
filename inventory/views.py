@@ -33,6 +33,7 @@ def save_stock_order(request):
                 return JsonResponse({'status': 'error', 'message': 'Invalid payload.'}, status=400)
 
             manufacturer = (data.get('manufacturer') or '').strip()[:100]
+            location = (data.get('location') or '').strip()[:100]
             order_date = data.get('order_date')
             order_id = data.get('order_id')
             raw_items = data.get('items', [])
@@ -70,12 +71,14 @@ def save_stock_order(request):
                 if order_id:
                     order = get_object_or_404(StockOrder, id=order_id)
                     order.manufacturer = manufacturer
+                    order.location = location
                     order.order_date = parsed_order_date
-                    order.save(update_fields=['manufacturer', 'order_date'])
+                    order.save(update_fields=['manufacturer', 'location', 'order_date'])
                     order.items.all().delete()
                 else:
                     order = StockOrder.objects.create(
                         manufacturer=manufacturer,
+                        location=location,
                         order_date=parsed_order_date,
                         created_by=request.user if request.user.is_authenticated else None,
                     )
@@ -97,6 +100,7 @@ def save_stock_order(request):
                 'order': {
                     'id': order.id,
                     'manufacturer': order.manufacturer,
+                    'location': order.location,
                     'order_date': parsed_order_date.strftime('%Y-%m-%d'),
                     'created_at': _format_stock_order_created_at(order.created_at),
                     'items': [
@@ -146,6 +150,7 @@ def stock_order_history(request):
         orders_payload.append({
             'id': order.id,
             'manufacturer': order.manufacturer,
+            'location': order.location,
             'order_date': order.order_date.strftime('%Y-%m-%d'),
             'created_at': _format_stock_order_created_at(order.created_at),
             'items': items_payload,
