@@ -12,13 +12,37 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunSQL(
             sql="""
-                UPDATE inventory_manufacturer
-                SET name = 'Bowring', code = 'BOWRING'
-                WHERE LOWER(name) = 'indian kulfi';
+                DO $$
+                DECLARE
+                    old_id bigint;
+                    new_id bigint;
+                BEGIN
+                    -- Rename 'Indian Kulfi' -> 'Bowring', merging into an existing
+                    -- 'Bowring' row (repointing products) if one already exists.
+                    SELECT id INTO old_id FROM inventory_manufacturer WHERE LOWER(name) = 'indian kulfi';
+                    SELECT id INTO new_id FROM inventory_manufacturer WHERE LOWER(name) = 'bowring';
+                    IF old_id IS NOT NULL THEN
+                        IF new_id IS NOT NULL AND new_id <> old_id THEN
+                            UPDATE inventory_product SET manufacturer_id = new_id WHERE manufacturer_id = old_id;
+                            DELETE FROM inventory_manufacturer WHERE id = old_id;
+                        ELSE
+                            UPDATE inventory_manufacturer SET name = 'Bowring', code = 'BOWRING' WHERE id = old_id;
+                        END IF;
+                    END IF;
 
-                UPDATE inventory_manufacturer
-                SET name = 'New Bowring', code = 'NEW_BOWRING'
-                WHERE LOWER(name) = 'kulfi corner';
+                    -- Rename 'Kulfi Corner' -> 'New Bowring', merging into an existing
+                    -- 'New Bowring' row (repointing products) if one already exists.
+                    SELECT id INTO old_id FROM inventory_manufacturer WHERE LOWER(name) = 'kulfi corner';
+                    SELECT id INTO new_id FROM inventory_manufacturer WHERE LOWER(name) = 'new bowring';
+                    IF old_id IS NOT NULL THEN
+                        IF new_id IS NOT NULL AND new_id <> old_id THEN
+                            UPDATE inventory_product SET manufacturer_id = new_id WHERE manufacturer_id = old_id;
+                            DELETE FROM inventory_manufacturer WHERE id = old_id;
+                        ELSE
+                            UPDATE inventory_manufacturer SET name = 'New Bowring', code = 'NEW_BOWRING' WHERE id = old_id;
+                        END IF;
+                    END IF;
+                END $$;
             """,
             reverse_sql="""
                 UPDATE inventory_manufacturer
