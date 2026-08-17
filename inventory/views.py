@@ -206,24 +206,47 @@ def logout_view(request):
 
 @login_required
 def dashboard(request):
-    """Main dashboard showing today's sales, revenue, and low stock alerts"""
+    """Main dashboard showing sales, revenue, and low stock alerts for a selected date."""
     today = timezone.now().date()
-    
-    # Today's sales
-    today_sales = Sales.objects.filter(sale_date=today)
-    total_today_sales = today_sales.count()
-    total_today_revenue = today_sales.aggregate(
-        total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
-    )['total']
-    
-    # Gross profit from sales only.
-    total_today_profit = sum(sale.get_profit() for sale in today_sales)
-    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=today).aggregate(
-        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-    )['total']
-    total_today_net_profit = total_today_profit - total_today_operation_cost
-    
-    # Total stock across active products only
+
+    selected_date_raw = request.GET.get('date')
+    if selected_date_raw:
+        try:
+            selected_date = datetime.strptime(selected_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_date = today
+    else:
+        selected_date = today
+
+    def _day_totals(for_date):
+        day_sales = Sales.objects.filter(sale_date=for_date).select_related('product')
+        quantity = day_sales.aggregate(
+            total=Coalesce(Sum('quantity'), 0, output_field=IntegerField())
+        )['total']
+        revenue = day_sales.aggregate(
+            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+        )['total']
+        cogs = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in day_sales)
+        operation_cost = OperationsExpense.objects.filter(operation_date=for_date).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        operation_income = OperationsIncome.objects.filter(income_date=for_date).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        net_profit = (revenue - cogs) - operation_cost + operation_income
+        return quantity, revenue, cogs, operation_cost, operation_income, net_profit
+
+    (
+        total_today_sales,
+        total_today_revenue,
+        total_today_cogs,
+        total_today_operation_cost,
+        total_today_operation_income,
+        total_today_net_profit,
+    ) = _day_totals(selected_date)
+    total_today_revenue_after_operations = total_today_revenue - total_today_operation_cost
+
+    # Total stock across active products only (live, not date-scoped)
     total_stock = Product.objects.filter(is_active=True).aggregate(
         total=Coalesce(
             Sum(
@@ -243,39 +266,46 @@ def dashboard(request):
         current_stock__lte=F('reorder_level'),
         is_active=True
     )
-    
-    # Weekly sales trend (last 7 days)
+
+    # Weekly finance trend (7 days ending on the selected date)
     last_7_days_sales = []
     for i in range(6, -1, -1):
-        date_temp = today - timedelta(days=i)
-        sales_count = Sales.objects.filter(sale_date=date_temp).count()
-        revenue = Sales.objects.filter(sale_date=date_temp).aggregate(
-            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
-        )['total']
+        date_temp = selected_date - timedelta(days=i)
+        quantity, revenue, cogs, op_expense, op_income, net_profit = _day_totals(date_temp)
         last_7_days_sales.append({
             'date': date_temp.strftime('%m/%d'),
-            'sales': sales_count,
-            'revenue': float(revenue)
+            'quantity': quantity,
+            'revenue': float(revenue),
+            'cogs': float(cogs),
+            'op_expense': float(op_expense),
+            'operation_income': float(op_income),
+            'net_profit': float(net_profit),
         })
-    
+
     # Top products (by sales count)
     top_products = Product.objects.annotate(
         sale_count=Count('sales')
     ).order_by('-sale_count')[:5]
-    
+
     context = {
+        'selected_date': selected_date,
+        'selected_date_iso': selected_date.isoformat(),
+        'prev_date_iso': (selected_date - timedelta(days=1)).isoformat(),
+        'next_date_iso': (selected_date + timedelta(days=1)).isoformat(),
         'total_stock': total_stock,
         'total_today_sales': total_today_sales,
         'total_today_revenue': total_today_revenue,
-        'total_today_profit': total_today_profit,
+        'total_today_cogs': total_today_cogs,
         'total_today_operation_cost': total_today_operation_cost,
+        'total_today_operation_income': total_today_operation_income,
         'total_today_net_profit': total_today_net_profit,
+        'total_today_revenue_after_operations': total_today_revenue_after_operations,
         'low_stock_count': low_stock_products.count(),
         'low_stock_products': low_stock_products[:5],
         'last_7_days_sales': last_7_days_sales,
         'top_products': top_products,
     }
-    
+
     return render(request, 'inventory/dashboard.html', context)
 
 # ==================== INDIAN KULFI PRODUCTS MODULE ====================
