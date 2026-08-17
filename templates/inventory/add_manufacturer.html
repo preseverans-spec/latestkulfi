@@ -1,33 +1,27 @@
 {% extends 'inventory/base.html' %}
 
-{% block title %}Add Manufacturer - Kulfi{% endblock %}
+{% block title %}{{ title }} - Kulfi{% endblock %}
 
 {% block content %}
-<h1 class="page-title"><i class="fas fa-industry"></i> Add Manufacturer</h1>
+<h1 class="page-title"><i class="fas fa-industry"></i> {{ title }}</h1>
 
 <div class="row">
-    <div class="col-lg-6">
-        <div class="card mb-3">
+    <div class="col-lg-6 offset-lg-3">
+        <div class="card">
             <div class="card-header">
-                <h5 class="mb-0">New Manufacturer</h5>
+                <h5 class="mb-0">{{ title }}</h5>
             </div>
             <div class="card-body">
                 <form method="POST">
                     {% csrf_token %}
-                    <input type="hidden" name="action" value="create_manufacturer">
+                    {{ form.code }}
                     <div class="mb-3">
-                        <label for="{{ form.name.id_for_label }}" class="form-label">Name <span class="text-danger">*</span></label>
+                        <label for="{{ form.name.id_for_label }}" class="form-label">
+                            Manufacturer Name <span class="text-danger">*</span>
+                        </label>
                         {{ form.name }}
                         {% if form.name.errors %}
                         <div class="alert alert-danger mt-2">{{ form.name.errors }}</div>
-                        {% endif %}
-                    </div>
-                    <div class="mb-3">
-                        <label for="{{ form.code.id_for_label }}" class="form-label">SKU Prefix</label>
-                        {{ form.code }}
-                        <small class="form-text text-muted">Used for auto SKU generation, e.g. IK, NB, KC.</small>
-                        {% if form.code.errors %}
-                        <div class="alert alert-danger mt-2">{{ form.code.errors }}</div>
                         {% endif %}
                     </div>
                     <div class="mb-3">
@@ -37,146 +31,18 @@
                         <div class="alert alert-danger mt-2">{{ form.description.errors }}</div>
                         {% endif %}
                     </div>
-                    <div class="mb-3 form-check">
-                        {{ form.is_active }}
-                        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label>
-                    </div>
-                    <button type="submit" class="btn btn-primary btn-lg d-inline-flex align-items-center gap-2">
-                        <i class="fas fa-save fa-lg"></i> Save Manufacturer
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">
-                <h5 class="mb-0">Select Manufacturer</h5>
-            </div>
-            <div class="card-body">
-                <form method="GET">
-                    <div class="mb-3">
-                        <label for="manufacturer_id" class="form-label">Manufacturer</label>
-                        <select name="manufacturer_id" id="manufacturer_id" class="form-select" onchange="this.form.submit()">
-                            <option value="">-- Select Manufacturer --</option>
-                            {% for manufacturer in manufacturers %}
-                            <option value="{{ manufacturer.id }}" {% if selected_manufacturer and selected_manufacturer.id == manufacturer.id %}selected{% endif %}>{{ manufacturer.name }}</option>
-                            {% endfor %}
-                        </select>
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-between">
+                        <a href="{% url 'manufacturer_list' %}" class="btn btn-secondary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-times fa-lg"></i> Cancel
+                        </a>
+                        <a href="{% url 'dashboard' %}" class="btn btn-outline-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-home fa-lg"></i> Home
+                        </a>
+                        <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                            <i class="fas fa-save fa-lg"></i> Save Manufacturer
+                        </button>
                     </div>
                 </form>
-
-                {% if selected_manufacturer %}
-                <form method="POST" onsubmit="return confirm('Delete manufacturer {{ selected_manufacturer.name }}? This works only if no products are linked.');">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="delete_manufacturer">
-                    <input type="hidden" name="manufacturer_id" value="{{ selected_manufacturer.id }}">
-                    <button type="submit" class="btn btn-outline-danger btn-lg d-inline-flex align-items-center gap-2">
-                        <i class="fas fa-trash fa-lg"></i> Delete Manufacturer
-                    </button>
-                </form>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <div class="col-lg-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Existing Manufacturers</h5>
-            </div>
-            <div class="card-body">
-                {% if manufacturers %}
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Name</th>
-                                <th>Prefix</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for manufacturer in manufacturers %}
-                            <tr>
-                                <td>{{ manufacturer.name }}</td>
-                                <td>{{ manufacturer.code|default:'-' }}</td>
-                                <td>
-                                    {% if manufacturer.is_active %}
-                                    <span class="badge bg-success">Active</span>
-                                    {% else %}
-                                    <span class="badge bg-secondary">Inactive</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="alert alert-info mb-0">No manufacturers found.</div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row mt-2">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Manufacturer Products</h5>
-                {% if selected_manufacturer %}
-                <span class="badge bg-primary">{{ selected_manufacturer.name }}</span>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                {% if not selected_manufacturer %}
-                <div class="alert alert-info mb-0">Select a manufacturer to view products and cost prices.</div>
-                {% elif manufacturer_products %}
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th>SKU</th>
-                                <th>Product</th>
-                                <th>Cost Price</th>
-                                <th>Move To Manufacturer</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for product in manufacturer_products %}
-                            <tr>
-                                <td><strong>{{ product.sku }}</strong></td>
-                                <td>{{ product.name }}</td>
-                                <td>₹{{ product.cost_price|floatformat:2 }}</td>
-                                <td>
-                                    <form method="POST" class="d-flex gap-2 align-items-center">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="action" value="switch_product_manufacturer">
-                                        <input type="hidden" name="product_id" value="{{ product.id }}">
-                                        <input type="hidden" name="selected_manufacturer_id" value="{{ selected_manufacturer.id }}">
-                                        <select name="target_manufacturer_id" class="form-select" required>
-                                            <option value="">-- Select Target --</option>
-                                            {% for manufacturer in switch_target_manufacturers %}
-                                            <option value="{{ manufacturer.id }}">{{ manufacturer.name }}</option>
-                                            {% endfor %}
-                                        </select>
-                                </td>
-                                <td>
-                                        <button type="submit" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-1">
-                                            <i class="fas fa-right-left"></i> Switch
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="alert alert-warning mb-0">No products linked to {{ selected_manufacturer.name }}.</div>
-                {% endif %}
             </div>
         </div>
     </div>

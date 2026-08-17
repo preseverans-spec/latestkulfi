@@ -18,10 +18,14 @@ urlpatterns = [
     path('products/manufacturers/add/', views.admin_only_view(views.add_manufacturer), name='add_manufacturer'),
     path('products/add/', views.admin_only_view(views.add_product), name='add_product'),
     path('products/edit/<int:product_id>/', views.admin_only_view(views.edit_product), name='edit_product'),
+    path('products/move/<int:product_id>/', views.admin_only_view(views.move_product), name='move_product'),
     path('products/delete/<int:product_id>/', views.admin_only_view(views.delete_product), name='delete_product'),
     path('products/trash/', views.admin_only_view(views.trash_list), name='inventory_trash'),
     path('products/restore/<int:product_id>/', views.admin_only_view(views.restore_product), name='restore_product'),
     path('products/hard-delete/<int:product_id>/', views.admin_only_view(views.hard_delete_product), name='hard_delete_product'),
+    path('manufacturers/', views.admin_only_view(views.manufacturer_list), name='manufacturer_list'),
+    path('manufacturers/add/', views.admin_only_view(views.add_manufacturer), name='add_manufacturer'),
+    path('manufacturers/<slug:manufacturer_key>/products/', views.admin_only_view(views.manufacturer_product_list), name='manufacturer_product_list'),
     
     # Inventory
     path('inventory/', views.admin_only_view(views.inventory_list), name='inventory_list'),

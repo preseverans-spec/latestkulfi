@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from inventory.models import Inventory, OperationsExpense, OperationsIncome, Product, Sales, SalesStockTaken
+from inventory.models import Inventory, Manufacturer, OperationsExpense, OperationsIncome, Product, Sales, SalesStockTaken
 
 
 class SyncApiTests(TestCase):
@@ -42,6 +42,82 @@ class SyncApiTests(TestCase):
 
 	def authenticate(self, user):
 		self.client.force_authenticate(user=user)
+
+	def test_add_product_duplicate_manufacturer_name_shows_error_message(self):
+		manufacturer = Manufacturer.objects.create(name='AStar', code='AST')
+		Product.objects.create(
+			name='Kesar Pista',
+			sku='AST001',
+			manufacturer=manufacturer,
+			category='Indian Kulfi',
+			cost_price='23.50',
+			selling_price='40.00',
+			current_stock=10,
+			reorder_level=5,
+			is_active=True,
+		)
+
+		admin = User.objects.create_user(username='admin2', password='pass12345', is_staff=True, is_superuser=True)
+		self.client.force_login(admin)
+		response = self.client.post(
+			reverse('add_product'),
+			{
+				'name': 'Kesar Pista',
+				'sku': 'AST005',
+				'manufacturer': manufacturer.id,
+				'category': 'Indian Kulfi',
+				'cost_price': '23.50',
+				'selling_price': '40.00',
+				'current_stock': '0',
+				'reorder_level': '5',
+				'description': '',
+				'is_active': 'on',
+			},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, 'A product with this name already exists for the selected manufacturer.')
+
+	def test_generate_next_sku_uses_manufacturer_code_not_id(self):
+		manufacturer = Manufacturer.objects.create(name='AStar', code='AST')
+		Product.objects.create(
+			name='Kesar Pista',
+			sku='AST005',
+			manufacturer=manufacturer,
+			category='Indian Kulfi',
+			cost_price='23.50',
+			selling_price='40.00',
+			current_stock=0,
+			reorder_level=5,
+			is_active=True,
+		)
+
+		self.assertEqual(ProductForm.generate_next_sku(manufacturer.id), 'AST006')
+		self.assertEqual(ProductForm.generate_next_sku('AStar'), 'AST006')
+
+	def test_add_product_keeps_selected_manufacturer_filter_after_save(self):
+		manufacturer = Manufacturer.objects.create(name='AStar', code='AST')
+		admin = User.objects.create_user(username='admin-filter', password='pass12345', is_staff=True, is_superuser=True)
+		self.client.force_login(admin)
+
+		response = self.client.post(
+			reverse('add_product') + f'?manufacturer={manufacturer.id}',
+			{
+				'name': 'New AStar Product',
+				'sku': 'AST999',
+				'manufacturer': manufacturer.id,
+				'category': 'AStar',
+				'cost_price': '12.00',
+				'selling_price': '18.00',
+				'current_stock': '5',
+				'reorder_level': '2',
+				'description': '',
+				'is_active': 'on',
+			},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		self.assertEqual(response.url, f"{reverse('product_list')}?manufacturer={manufacturer.id}")
 
 	def test_sync_push_create_sales_idempotent(self):
 		self.authenticate(self.sales_user)

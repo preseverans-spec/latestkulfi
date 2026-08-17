@@ -4,16 +4,16 @@ from .models import Manufacturer, Product, Inventory, Sales, SalesStockTaken, Op
 
 @admin.register(Manufacturer)
 class ManufacturerAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'is_active', 'created_at')
+    list_display = ('name', 'is_active', 'created_at')
     list_filter = ('is_active', 'created_at')
-    search_fields = ('name', 'code')
+    search_fields = ('name',)
     readonly_fields = ('created_at', 'updated_at')
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = ('name', 'sku', 'manufacturer', 'category', 'current_stock', 'selling_price', 'is_active')
     list_filter = ('is_active', 'manufacturer', 'category', 'created_at')
-    search_fields = ('name', 'sku')
+    search_fields = ('name', 'sku', 'manufacturer__name')
     readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         ('Basic Info', {

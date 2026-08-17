@@ -1,7 +1,6 @@
 import re
 
 from django import forms
-from django.db.models import Q
 from django.contrib.auth.models import User
 from django.utils import timezone
 from .models import Manufacturer, Product, Sales, OperationsExpense, OperationsIncome
@@ -10,17 +9,39 @@ from .models import Manufacturer, Product, Sales, OperationsExpense, OperationsI
 class ManufacturerForm(forms.ModelForm):
     class Meta:
         model = Manufacturer
-        fields = ['name', 'code', 'description', 'is_active']
+        fields = ['name', 'code', 'description']
         widgets = {
-            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Manufacturer Name'}),
-            'code': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'SKU Prefix (e.g., IK)'}),
-            'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': 'Optional description'}),
-            'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Manufacturer name'}),
+            'code': forms.HiddenInput(),
+            'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Optional description'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['code'].required = False
+
+    def clean_name(self):
+        name = (self.cleaned_data.get('name') or '').strip()
+        if not name:
+            raise forms.ValidationError('Manufacturer name is required.')
+        if Manufacturer.objects.filter(name__iexact=name).exists():
+            raise forms.ValidationError('A manufacturer with this name already exists.')
+        return name
 
     def clean_code(self):
         code = (self.cleaned_data.get('code') or '').strip().upper()
-        return re.sub(r'[^A-Z0-9]', '', code)
+        if not code:
+            name = (self.cleaned_data.get('name') or '').strip()
+            code = name.upper().replace(' ', '_')[:50]
+        return code
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if not instance.code:
+            instance.code = instance.name.strip().upper().replace(' ', '_')[:50]
+        if commit:
+            instance.save()
+        return instance
 
 
 
@@ -49,26 +70,21 @@ class ProductForm(forms.ModelForm):
             raise forms.ValidationError('Reorder level cannot be negative.')
         return reorder_level
 
-    DEFAULT_CATEGORIES = ['Kulfi Corner', 'Indian Kulfi']
-    CATEGORY_PREFIX_MAP = {
-        'Kulfi Corner': 'KC',
-        'Indian Kulfi': 'IK',
-        'NEW BOWRING': 'NB',
-    }
+    DEFAULT_CATEGORY = 'Indian Kulfi'
 
-    manufacturer = forms.ModelChoiceField(
-        queryset=Manufacturer.objects.none(),
-        widget=forms.Select(attrs={'class': 'form-control'}),
-        required=True,
-        label='Manufacturer'
+    category = forms.CharField(
+        widget=forms.HiddenInput(),
+        initial=DEFAULT_CATEGORY,
+        required=False,
     )
 
     class Meta:
         model = Product
-        fields = ['name', 'sku', 'manufacturer', 'cost_price', 'selling_price', 'current_stock', 'reorder_level', 'description', 'is_active']
+        fields = ['name', 'sku', 'manufacturer', 'category', 'cost_price', 'selling_price', 'current_stock', 'reorder_level', 'description', 'is_active']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Product Name'}),
-            'sku': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Auto-generated from category (e.g., IK001)'}),
+            'sku': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Auto-generated from manufacturer (e.g., BR001)'}),
+            'manufacturer': forms.Select(attrs={'class': 'form-select'}),
             'cost_price': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Cost Price', 'step': '0.01'}),
             'selling_price': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Selling Price', 'step': '0.01'}),
             'current_stock': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Current Stock'}),
@@ -77,26 +93,53 @@ class ProductForm(forms.ModelForm):
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
+    @staticmethod
+    def resolve_manufacturer_name(manufacturer_value):
+        if manufacturer_value is None:
+            return ''
+
+        if isinstance(manufacturer_value, Manufacturer):
+            return (manufacturer_value.name or '').strip()
+
+        value = str(manufacturer_value).strip()
+        if not value:
+            return ''
+
+        try:
+            manufacturer_id = int(value)
+        except ValueError:
+            manufacturer_id = None
+
+        if manufacturer_id is not None:
+            manufacturer = Manufacturer.objects.filter(pk=manufacturer_id).only('name', 'code').first()
+            if manufacturer:
+                return (manufacturer.name or '').strip()
+
+        manufacturer = Manufacturer.objects.filter(name__iexact=value).only('name', 'code').first()
+        if manufacturer:
+            return (manufacturer.name or '').strip()
+
+        return value
+
     @classmethod
-    def get_category_prefix(cls, category_name):
-        category_name = (category_name or '').strip()
-        if not category_name:
+    def get_manufacturer_prefix(cls, manufacturer_name):
+        manufacturer_name = cls.resolve_manufacturer_name(manufacturer_name)
+        manufacturer_name = (manufacturer_name or '').strip()
+        if not manufacturer_name:
             return 'PR'
 
-        manufacturer = Manufacturer.objects.filter(name__iexact=category_name).first()
+        manufacturer = Manufacturer.objects.filter(name__iexact=manufacturer_name).only('code').first()
         if manufacturer and manufacturer.code:
-            return manufacturer.code.strip().upper()
+            return manufacturer.code.strip().upper()[:10]
 
-        if category_name in cls.CATEGORY_PREFIX_MAP:
-            return cls.CATEGORY_PREFIX_MAP[category_name]
-
-        words = [word for word in re.split(r'\s+', category_name) if word]
+        words = [word for word in re.split(r'\s+', manufacturer_name) if word]
         initials = ''.join(word[0].upper() for word in words[:2])
         return initials or 'PR'
 
     @classmethod
-    def generate_next_sku(cls, category_name):
-        prefix = cls.get_category_prefix(category_name)
+    def generate_next_sku(cls, manufacturer_name):
+        manufacturer_name = cls.resolve_manufacturer_name(manufacturer_name)
+        prefix = cls.get_manufacturer_prefix(manufacturer_name)
         pattern = re.compile(rf'^{re.escape(prefix)}(\d+)$', re.IGNORECASE)
 
         max_number = 0
@@ -111,44 +154,59 @@ class ProductForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
 
         self.fields['sku'].required = False
-        manufacturer_qs = Manufacturer.objects.filter(is_active=True)
-        if self.instance and self.instance.pk and self.instance.manufacturer_id:
-            manufacturer_qs = Manufacturer.objects.filter(
-                Q(is_active=True) | Q(pk=self.instance.manufacturer_id)
-            )
-        self.fields['manufacturer'].queryset = manufacturer_qs.order_by('name')
+        Manufacturer.ensure_defaults()
+        self.fields['manufacturer'].queryset = Manufacturer.objects.filter(is_active=True).order_by('name')
+        self.fields['manufacturer'].empty_label = 'Select Manufacturer'
+        self.fields['manufacturer'].required = True
 
-        if self.instance and self.instance.pk and not self.instance.manufacturer_id and self.instance.category:
-            existing_manufacturer = Manufacturer.objects.filter(name__iexact=self.instance.category).first()
-            if existing_manufacturer:
-                self.initial['manufacturer'] = existing_manufacturer.id
+        if self.instance and self.instance.manufacturer_id:
+            self.fields['category'].initial = self.instance.manufacturer.name
+        else:
+            self.fields['category'].initial = self.DEFAULT_CATEGORY
 
     def clean(self):
         cleaned_data = super().clean()
         manufacturer = cleaned_data.get('manufacturer')
-        category = manufacturer.name if manufacturer else ''
         sku = (cleaned_data.get('sku') or '').strip().upper()
+        cleaned_data['category'] = manufacturer.name if manufacturer else self.DEFAULT_CATEGORY
 
-        cleaned_data['category'] = category
+        if sku:
+            duplicate_sku = Product.objects.filter(sku__iexact=sku)
+            if self.instance and self.instance.pk:
+                duplicate_sku = duplicate_sku.exclude(pk=self.instance.pk)
+            if duplicate_sku.exists():
+                raise forms.ValidationError('A product with this SKU already exists.')
 
         if self.instance and self.instance.pk:
             cleaned_data['sku'] = sku or self.instance.sku
             return cleaned_data
 
         if not sku:
-            cleaned_data['sku'] = self.generate_next_sku(category)
+            cleaned_data['sku'] = self.generate_next_sku(manufacturer.name if manufacturer else '')
         else:
             cleaned_data['sku'] = sku
 
         return cleaned_data
 
-    def save(self, commit=True):
-        instance = super().save(commit=False)
-        if instance.manufacturer:
-            instance.category = instance.manufacturer.name
-        if commit:
-            instance.save()
-        return instance
+
+class ProductMoveForm(forms.Form):
+    manufacturer = forms.ModelChoiceField(
+        queryset=Manufacturer.objects.none(),
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        label='Target Manufacturer',
+    )
+    cost_price = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
+        label='Cost Price',
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        Manufacturer.ensure_defaults()
+        self.fields['manufacturer'].queryset = Manufacturer.objects.filter(is_active=True).order_by('name')
 
 class SalesForm(forms.ModelForm):
     class Meta:

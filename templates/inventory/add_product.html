@@ -14,6 +14,13 @@
             <div class="card-body">
                 <form method="POST">
                     {% csrf_token %}
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">
+                        {% for error in form.non_field_errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                     
                     <div class="row">
                         <div class="col-md-6 mb-3">
@@ -31,7 +38,7 @@
                                 SKU (Stock Keeping Unit) <span class="text-danger">*</span>
                             </label>
                             {{ form.sku }}
-                            <small class="form-text text-muted">Auto-generated from manufacturer prefix (e.g., IK001). You can still edit it.</small>
+                            <small class="form-text text-muted">Auto-generated from manufacturer (e.g., BR001). You can still edit it.</small>
                             {% if form.sku.errors %}
                             <div class="alert alert-danger mt-2">{{ form.sku.errors }}</div>
                             {% endif %}
@@ -39,13 +46,22 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label for="{{ form.manufacturer.id_for_label }}" class="form-label">
-                            Manufacturer <span class="text-danger">*</span>
-                        </label>
-                        {{ form.manufacturer }}
-                        {% if form.manufacturer.errors %}
-                        <div class="alert alert-danger mt-2">{{ form.manufacturer.errors }}</div>
-                        {% endif %}
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="{{ form.manufacturer.id_for_label }}" class="form-label">
+                                    Manufacturer <span class="text-danger">*</span>
+                                </label>
+                                {{ form.manufacturer }}
+                                {% if form.manufacturer.errors %}
+                                <div class="alert alert-danger mt-2">{{ form.manufacturer.errors }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Category</label>
+                                <input id="category-display" type="text" class="form-control" value="" readonly>
+                                {{ form.category }}
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="row">
@@ -193,6 +209,28 @@ const manufacturerInput = document.getElementById('id_manufacturer');
 const skuInput = document.getElementById('id_sku');
 const isEditMode = {% if product %}true{% else %}false{% endif %};
 
+function getSelectedManufacturerName() {
+    if (!manufacturerInput || !manufacturerInput.selectedOptions || manufacturerInput.selectedOptions.length === 0) {
+        return '';
+    }
+
+    return manufacturerInput.selectedOptions[0].textContent.trim();
+}
+
+function updateCategoryDisplay() {
+    const manufacturerName = getSelectedManufacturerName();
+    const categoryVal = manufacturerName || 'Indian Kulfi';
+    const categoryDisplay = document.getElementById('category-display');
+    const hiddenCategory = document.getElementById('id_category');
+
+    if (categoryDisplay) {
+        categoryDisplay.value = categoryVal;
+    }
+    if (hiddenCategory) {
+        hiddenCategory.value = categoryVal;
+    }
+}
+
 let skuManuallyEdited = skuInput.value.trim() !== '';
 
 skuInput.addEventListener('input', function () {
@@ -200,8 +238,9 @@ skuInput.addEventListener('input', function () {
 });
 
 manufacturerInput.addEventListener('change', function () {
+    updateCategoryDisplay();
     if (!isEditMode && !skuManuallyEdited) {
-        fetchNextSkuForManufacturer(manufacturerInput.options[manufacturerInput.selectedIndex]?.text || '');
+        fetchNextSkuForManufacturer(getSelectedManufacturerName());
     }
 });
 
@@ -211,8 +250,9 @@ sellingInput.addEventListener('input', calculateProfit);
 
 // Auto-fill SKU on add form initial load
 if (!isEditMode && !skuInput.value.trim()) {
-    fetchNextSkuForManufacturer(manufacturerInput.options[manufacturerInput.selectedIndex]?.text || '');
+    fetchNextSkuForManufacturer(getSelectedManufacturerName());
 }
+updateCategoryDisplay();
 
 // Calculate on page load
 calculateProfit();

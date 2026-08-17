@@ -1,0 +1,70 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Manufacturers - Kulfi{% endblock %}
+
+{% block content %}
+<h1 class="page-title"><i class="fas fa-industry"></i> Manufacturers</h1>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center gap-2">
+                <h5 class="mb-0">Manufacturer Master</h5>
+                <a href="{% url 'add_manufacturer' %}" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+                    <i class="fas fa-plus-circle fa-lg"></i> Add Manufacturer
+                </a>
+            </div>
+            <div class="card-body">
+                {% if manufacturer_scopes %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name</th>
+                                <th>Products</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for scope in manufacturer_scopes %}
+                            <tr>
+                                <td>
+                                    <strong>{{ scope.name }}</strong>
+                                    {% if scope.raw_names|length > 1 %}
+                                    <div class="small text-muted">Aliases: {{ scope.raw_names|join:", " }}</div>
+                                    {% endif %}
+                                </td>
+                                <td><span class="badge bg-info text-dark">{{ scope.product_count }}</span></td>
+                                <td>
+                                    <span class="badge bg-success">Active</span>
+                                </td>
+                                <td>
+                                    {% if scope.manufacturers %}
+                                    {{ scope.manufacturers.0.created_at|date:'Y-m-d' }}
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{% url 'manufacturer_product_list' scope.key %}" class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-1">
+                                        <i class="fas fa-list"></i> Product List
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    No manufacturers found.
+                    <a href="{% url 'add_manufacturer' %}">Add the first manufacturer</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

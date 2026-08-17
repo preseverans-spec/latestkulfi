@@ -1,176 +1,29 @@
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 from .models import StockOrder, StockOrderItem
-
-
-def get_stock_order_units_per_lot(kulfi_name):
-    """Return units per lot used by New Stock Order."""
-    normalized_name = normalize_sales_product_name(kulfi_name).strip().lower()
-    return 12 if normalized_name == 'pot' else 6
-
-
-def _format_stock_order_created_at(dt_value):
-    """Return a safe created-at display string for stock order JSON payloads."""
-    if not dt_value:
-        return ''
-    try:
-        return timezone.localtime(dt_value).strftime('%Y-%m-%d %H:%M')
-    except Exception:
-        return dt_value.strftime('%Y-%m-%d %H:%M')
-
-
 # Save Stock Order via AJAX
 @csrf_exempt
 @login_required
 def save_stock_order(request):
-    if not request.user.is_staff:
-        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
     if request.method == 'POST':
-        try:
-            try:
-                data = json.loads(request.body.decode() or '{}')
-            except (TypeError, ValueError):
-                return JsonResponse({'status': 'error', 'message': 'Invalid payload.'}, status=400)
-
-            manufacturer = (data.get('manufacturer') or '').strip()[:100]
-            location = (data.get('location') or '').strip()[:100]
-            order_date = data.get('order_date')
-            order_id = data.get('order_id')
-            raw_items = data.get('items', [])
-
-            if not manufacturer:
-                return JsonResponse({'status': 'error', 'message': 'Manufacturer is required.'}, status=400)
-            if not order_date:
-                return JsonResponse({'status': 'error', 'message': 'Order date is required.'}, status=400)
-            try:
-                parsed_order_date = date.fromisoformat(str(order_date))
-            except (TypeError, ValueError):
-                return JsonResponse({'status': 'error', 'message': 'Invalid order date.'}, status=400)
-
-            normalized_items = []
-            for item in raw_items:
-                name = (item.get('name') or '').strip()[:100]
-                try:
-                    lot_value = int(item.get('lot', 0) or 0)
-                except (TypeError, ValueError):
-                    lot_value = 0
-                lot_value = max(0, lot_value)
-                if not name or lot_value <= 0:
-                    continue
-                units_per_lot = get_stock_order_units_per_lot(name)
-                normalized_items.append({
-                    'name': name,
-                    'lot': lot_value,
-                    'quantity': lot_value * units_per_lot,
-                })
-
-            if not normalized_items:
-                return JsonResponse({'status': 'error', 'message': 'Add at least one flavor with lot greater than 0.'}, status=400)
-
-            with transaction.atomic():
-                if order_id:
-                    order = get_object_or_404(StockOrder, id=order_id)
-                    order.manufacturer = manufacturer
-                    order.location = location
-                    order.order_date = parsed_order_date
-                    order.save(update_fields=['manufacturer', 'location', 'order_date'])
-                    order.items.all().delete()
-                else:
-                    order = StockOrder.objects.create(
-                        manufacturer=manufacturer,
-                        location=location,
-                        order_date=parsed_order_date,
-                        created_by=request.user if request.user.is_authenticated else None,
-                    )
-
-                StockOrderItem.objects.bulk_create([
-                    StockOrderItem(
-                        order=order,
-                        kulfi_name=item['name'],
-                        lot=item['lot'],
-                        quantity=item['quantity'],
-                    )
-                    for item in normalized_items
-                ])
-
-            total_lot = sum(item['lot'] for item in normalized_items)
-            total_qty = sum(item['quantity'] for item in normalized_items)
-            return JsonResponse({
-                'status': 'success',
-                'order': {
-                    'id': order.id,
-                    'manufacturer': order.manufacturer,
-                    'location': order.location,
-                    'order_date': parsed_order_date.strftime('%Y-%m-%d'),
-                    'created_at': _format_stock_order_created_at(order.created_at),
-                    'items': [
-                        {
-                            'name': item['name'],
-                            'lot': item['lot'],
-                            'quantity': item['quantity'],
-                        }
-                        for item in normalized_items
-                    ],
-                    'total_lot': total_lot,
-                    'total_qty': total_qty,
-                },
-            })
-        except Exception as exc:
-            return JsonResponse({'status': 'error', 'message': f'Unable to save stock order due to a server error: {exc}'}, status=500)
+        data = json.loads(request.body.decode())
+        manufacturer = data.get('manufacturer')
+        order_date = data.get('order_date')
+        items = data.get('items', [])
+        order = StockOrder.objects.create(
+            manufacturer=manufacturer,
+            order_date=order_date,
+            created_by=request.user if request.user.is_authenticated else None
+        )
+        for item in items:
+            StockOrderItem.objects.create(
+                order=order,
+                kulfi_name=item.get('name'),
+                lot=item.get('lot', 0),
+                quantity=item.get('qty', 0)
+            )
+        return JsonResponse({'status': 'success'})
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
-
-
-@login_required
-def stock_order_history(request):
-    if not request.user.is_staff:
-        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
-    if request.method != 'GET':
-        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
-
-    orders_qs = StockOrder.objects.prefetch_related('items').order_by('-created_at')
-    manufacturer_filter = (request.GET.get('manufacturer') or '').strip()
-    if manufacturer_filter:
-        orders_qs = orders_qs.filter(manufacturer=manufacturer_filter)
-    orders_qs = orders_qs[:100]
-
-    orders_payload = []
-    for order in orders_qs:
-        items_payload = []
-        total_lot = 0
-        total_qty = 0
-        for item in order.items.all().order_by('id'):
-            items_payload.append({
-                'name': item.kulfi_name,
-                'lot': item.lot,
-                'quantity': item.quantity,
-            })
-            total_lot += item.lot
-            total_qty += item.quantity
-
-        orders_payload.append({
-            'id': order.id,
-            'manufacturer': order.manufacturer,
-            'location': order.location,
-            'order_date': order.order_date.strftime('%Y-%m-%d'),
-            'created_at': _format_stock_order_created_at(order.created_at),
-            'items': items_payload,
-            'total_lot': total_lot,
-            'total_qty': total_qty,
-        })
-
-    return JsonResponse({'status': 'success', 'orders': orders_payload})
-
-
-@csrf_exempt
-@login_required
-def delete_stock_order(request, order_id):
-    if not request.user.is_staff:
-        return JsonResponse({'status': 'error', 'message': 'Forbidden'}, status=403)
-    if request.method not in ('POST', 'DELETE'):
-        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
-    order = get_object_or_404(StockOrder, id=order_id)
-    order.delete()
-    return JsonResponse({'status': 'success'})
 from django.views.decorators.http import require_POST
 from django.core.mail import send_mail
 import json
@@ -205,7 +58,7 @@ from django.utils import timezone
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from datetime import datetime, timedelta, date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate, login, logout
@@ -219,67 +72,74 @@ import re
 from collections import OrderedDict, defaultdict
 
 from .models import Manufacturer, Product, Inventory, Sales, SalesStockTaken, OperationsExpense, OperationsIncome, DailySalesReport, WeeklyReport, ProfitReport, SalesCountDraft, ExpenseDetailOption
-from .forms import ManufacturerForm, ProductForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
+from .forms import ManufacturerForm, ProductForm, ProductMoveForm, SalesForm, DateRangeForm, OperationsExpenseForm, OperationsIncomeForm, UserManagementForm
 
 
-# Fixed Indian Kulfi costs used in Quick Inventory Entry when manufacturer is Indian Kulfi.
-IK_QUICK_ENTRY_COST_BY_NAME = {
-    'malai': Decimal('24.17'),
-    'kesar badam': Decimal('24.17'),
-    'kesar pista': Decimal('24.17'),
-    'pista badam': Decimal('26.67'),
-    'chocolate': Decimal('26.67'),
-    'strawberry': Decimal('24.17'),
-    'mango malai': Decimal('24.17'),
-    'dry fruit': Decimal('26.67'),
-    'butterscotch': Decimal('26.67'),
-    'rose': Decimal('26.67'),
-    'blackcurrent': Decimal('26.67'),
-    'blackcurrant': Decimal('26.67'),
-    'caramel coffee': Decimal('26.67'),
-    'coconut': Decimal('24.17'),
-    'elaichi': Decimal('24.17'),
-    'litchi': Decimal('24.17'),
-    'kesar kajoor': Decimal('24.17'),
-    'guava': Decimal('26.67'),
-    'paan': Decimal('26.67'),
-}
-
-# Fixed Kulfi Corner costs used in Quick Inventory Entry when manufacturer is Kulfi Corner.
-KC_QUICK_ENTRY_COST_BY_NAME = {
-    'malai': Decimal('28.00'),
-    'kesar badam': Decimal('28.00'),
-    'kesar pista': Decimal('28.00'),
-    'pista badam': Decimal('28.00'),
-    'chocolate': Decimal('28.00'),
-    'strawberry': Decimal('26.00'),
-    'mango malai': Decimal('26.00'),
-    'dry fruit': Decimal('28.00'),
-    'butterscotch': Decimal('28.00'),
-    'rose': Decimal('28.00'),
-    'blackcurrent': Decimal('28.00'),
-    'blackcurrant': Decimal('28.00'),
-    'caramel coffee': Decimal('28.00'),
-    'coconut': Decimal('26.00'),
-    'elaichi': Decimal('26.00'),
-    'litchi': Decimal('26.00'),
-    'kesar kajoor': Decimal('26.00'),
-    'guava': Decimal('28.00'),
-    'paan': Decimal('28.00'),
-}
-
-# Cost price → manufacturer lookup (covers both IK and KC known price points).
-COST_PRICE_MANUFACTURER_MAP = {
-    Decimal('24.17'): 'Indian Kulfi',
-    Decimal('26.67'): 'Indian Kulfi',
-    Decimal('26.00'): 'Kulfi Corner',
-    Decimal('28.00'): 'Kulfi Corner',
-}
+def _get_manufacturer_by_name(manufacturer_name):
+    manufacturer_name = (manufacturer_name or '').strip()
+    if not manufacturer_name:
+        return None
+    return Manufacturer.objects.filter(name__iexact=manufacturer_name, is_active=True).first()
 
 
-def _identify_manufacturer_from_cost(cost_price):
-    """Return manufacturer name derived from cost price, defaulting to 'Kulfi Corner'."""
-    return COST_PRICE_MANUFACTURER_MAP.get(Decimal(str(cost_price)), 'Kulfi Corner')
+def _get_products_for_manufacturer(manufacturer):
+    if not manufacturer:
+        return Product.objects.none()
+
+    products = list(
+        Product.objects.filter(is_active=True, manufacturer=manufacturer)
+        .select_related('manufacturer')
+    )
+    products.sort(key=lambda product: get_daily_sales_product_sort_key(product.name, product.sku or ''))
+    return products
+
+
+def _normalize_manufacturer_name(name):
+    normalized = (name or '').strip().replace('_', ' ')
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return normalized.upper()
+
+
+def _resolve_manufacturer_scope(name):
+    normalized = _normalize_manufacturer_name(name)
+    if normalized in {'BOWRING', 'INDIAN KULFI'}:
+        return 'bowring', 'Bowring'
+    if normalized == 'NEW BOWRING' or normalized.endswith(' CORNER'):
+        return 'new-bowring', 'New Bowring'
+    return None, (name or '').strip() or 'Unknown Manufacturer'
+
+
+def _build_manufacturer_scopes():
+    Manufacturer.ensure_defaults()
+    active_manufacturers = list(Manufacturer.objects.filter(is_active=True).order_by('name'))
+
+    grouped = OrderedDict()
+    for manufacturer in active_manufacturers:
+        key, label = _resolve_manufacturer_scope(manufacturer.name)
+        if not key:
+            key = f'manufacturer-{manufacturer.id}'
+            label = manufacturer.name.strip()
+
+        scope = grouped.setdefault(key, {
+            'key': key,
+            'name': label,
+            'manufacturers': [],
+            'manufacturer_ids': [],
+            'raw_names': set(),
+            'product_count': 0,
+        })
+        scope['manufacturers'].append(manufacturer)
+        scope['manufacturer_ids'].append(manufacturer.id)
+        scope['raw_names'].add(manufacturer.name)
+
+    for scope in grouped.values():
+        scope['raw_names'] = sorted(scope['raw_names'])
+        scope['product_count'] = Product.objects.filter(
+            is_active=True,
+            manufacturer_id__in=scope['manufacturer_ids'],
+        ).count()
+
+    return list(grouped.values())
 
 
 def _extract_manufacturer_from_notes(notes):
@@ -347,37 +207,21 @@ def logout_view(request):
 @login_required
 def dashboard(request):
     """Main dashboard showing today's sales, revenue, and low stock alerts"""
-    today = timezone.localdate()
-    selected_date = today
-    selected_date_raw = (request.GET.get('date') or '').strip()
-    if selected_date_raw:
-        try:
-            selected_date = date.fromisoformat(selected_date_raw)
-        except ValueError:
-            selected_date = today
-    prev_date = selected_date - timedelta(days=1)
-    next_date = selected_date + timedelta(days=1)
+    today = timezone.now().date()
     
     # Today's sales
-    today_sales = Sales.objects.filter(sale_date=selected_date)
-    total_today_sales = today_sales.aggregate(
-        total=Coalesce(Sum('quantity'), 0)
-    )['total']
+    today_sales = Sales.objects.filter(sale_date=today)
+    total_today_sales = today_sales.count()
     total_today_revenue = today_sales.aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
     
     # Gross profit from sales only.
     total_today_profit = sum(sale.get_profit() for sale in today_sales)
-    total_today_cogs = total_today_revenue - total_today_profit
-    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
+    total_today_operation_cost = OperationsExpense.objects.filter(operation_date=today).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
-    total_today_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
-        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-    )['total']
-    total_today_revenue_after_operations = total_today_revenue - total_today_operation_cost
-    total_today_net_profit = total_today_profit - total_today_operation_cost + total_today_operation_income
+    total_today_net_profit = total_today_profit - total_today_operation_cost
     
     # Total stock across active products only
     total_stock = Product.objects.filter(is_active=True).aggregate(
@@ -403,53 +247,29 @@ def dashboard(request):
     # Weekly sales trend (last 7 days)
     last_7_days_sales = []
     for i in range(6, -1, -1):
-        date_temp = selected_date - timedelta(days=i)
-        day_sales = Sales.objects.filter(sale_date=date_temp).select_related('product')
-        quantity_sold = day_sales.aggregate(
-            total=Coalesce(Sum('quantity'), 0)
-        )['total']
-        revenue = day_sales.aggregate(
+        date_temp = today - timedelta(days=i)
+        sales_count = Sales.objects.filter(sale_date=date_temp).count()
+        revenue = Sales.objects.filter(sale_date=date_temp).aggregate(
             total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
         )['total']
-        gross_profit = sum(sale.get_profit() for sale in day_sales)
-        operation_cost = OperationsExpense.objects.filter(operation_date=date_temp).aggregate(
-            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-        )['total']
-        operation_income = OperationsIncome.objects.filter(income_date=date_temp).aggregate(
-            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-        )['total']
-        cogs = revenue - gross_profit
-        net_profit = gross_profit - operation_cost + operation_income
         last_7_days_sales.append({
             'date': date_temp.strftime('%m/%d'),
-            'quantity': quantity_sold,
-            'revenue': float(revenue),
-            'cogs': float(cogs),
-            'op_expense': float(operation_cost),
-            'operation_income': float(operation_income),
-            'net_profit': float(net_profit),
+            'sales': sales_count,
+            'revenue': float(revenue)
         })
     
     # Top products (by sales count)
     top_products = Product.objects.annotate(
-        sale_count=Count('sales', filter=Q(sales__sale_date=selected_date))
-    ).filter(sale_count__gt=0).order_by('-sale_count')[:5]
+        sale_count=Count('sales')
+    ).order_by('-sale_count')[:5]
     
     context = {
         'total_stock': total_stock,
         'total_today_sales': total_today_sales,
         'total_today_revenue': total_today_revenue,
         'total_today_profit': total_today_profit,
-        'total_today_cogs': total_today_cogs,
         'total_today_operation_cost': total_today_operation_cost,
-        'total_today_operation_income': total_today_operation_income,
-        'total_today_revenue_after_operations': total_today_revenue_after_operations,
         'total_today_net_profit': total_today_net_profit,
-        'selected_date': selected_date,
-        'selected_date_iso': selected_date.isoformat(),
-        'prev_date_iso': prev_date.isoformat(),
-        'next_date_iso': next_date.isoformat(),
-        'is_today': selected_date == today,
         'low_stock_count': low_stock_products.count(),
         'low_stock_products': low_stock_products[:5],
         'last_7_days_sales': last_7_days_sales,
@@ -460,127 +280,128 @@ def dashboard(request):
 
 # ==================== INDIAN KULFI PRODUCTS MODULE ====================
 
-
-def get_product_manufacturer_name(product):
-    if getattr(product, 'manufacturer', None) and product.manufacturer.name:
-        return product.manufacturer.name.strip()
-    return (product.category or '').strip()
-
-
-@login_required
-@permission_required('inventory.add_product', raise_exception=True)
-def add_manufacturer(request):
-    """Add manufacturers, manage linked products, and perform manufacturer actions."""
-    selected_manufacturer_id = request.GET.get('manufacturer_id', '').strip()
-
-    if request.method == 'POST':
-        action = (request.POST.get('action') or '').strip()
-
-        if action == 'create_manufacturer':
-            form = ManufacturerForm(request.POST)
-            if form.is_valid():
-                manufacturer = form.save()
-                messages.success(request, f'Manufacturer "{manufacturer.name}" added successfully!')
-                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={manufacturer.id}")
-        elif action == 'switch_product_manufacturer':
-            product_id = request.POST.get('product_id')
-            target_manufacturer_id = request.POST.get('target_manufacturer_id')
-            selected_manufacturer_id = request.POST.get('selected_manufacturer_id', '').strip()
-
-            product = Product.objects.filter(pk=product_id).select_related('manufacturer').first()
-            target_manufacturer = Manufacturer.objects.filter(pk=target_manufacturer_id).first()
-
-            if not product:
-                messages.error(request, 'Selected product was not found.')
-            elif not target_manufacturer:
-                messages.error(request, 'Please choose a valid target manufacturer.')
-            else:
-                old_name = get_product_manufacturer_name(product) or 'Unassigned'
-                product.manufacturer = target_manufacturer
-                product.category = target_manufacturer.name
-                product.save()
-                messages.success(
-                    request,
-                    f'Product "{product.name}" moved from "{old_name}" to "{target_manufacturer.name}".',
-                )
-
-            if selected_manufacturer_id:
-                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={selected_manufacturer_id}")
-            return redirect('add_manufacturer')
-        elif action == 'delete_manufacturer':
-            manufacturer_id = request.POST.get('manufacturer_id')
-            manufacturer = Manufacturer.objects.filter(pk=manufacturer_id).first()
-            if not manufacturer:
-                messages.error(request, 'Selected manufacturer was not found.')
-                return redirect('add_manufacturer')
-
-            linked_count = Product.objects.filter(manufacturer=manufacturer).count()
-            if linked_count > 0:
-                messages.error(
-                    request,
-                    f'Cannot delete "{manufacturer.name}" because {linked_count} product(s) are still linked. '
-                    'Switch those products first.',
-                )
-                return redirect(f"{reverse('add_manufacturer')}?manufacturer_id={manufacturer.id}")
-
-            manufacturer_name = manufacturer.name
-            manufacturer.delete()
-            messages.success(request, f'Manufacturer "{manufacturer_name}" deleted successfully.')
-            return redirect('add_manufacturer')
-
-        form = ManufacturerForm()
-    else:
-        form = ManufacturerForm()
-
-    manufacturers = Manufacturer.objects.order_by('name')
-    selected_manufacturer = None
-    if selected_manufacturer_id:
-        selected_manufacturer = manufacturers.filter(pk=selected_manufacturer_id).first()
-
-    manufacturer_products = Product.objects.none()
-    switch_target_manufacturers = Manufacturer.objects.none()
-    if selected_manufacturer:
-        manufacturer_products = (
-            Product.objects.filter(manufacturer=selected_manufacturer)
-            .select_related('manufacturer')
-            .order_by('sku', 'name')
-        )
-        switch_target_manufacturers = manufacturers.exclude(pk=selected_manufacturer.pk)
-
-    context = {
-        'form': form,
-        'manufacturers': manufacturers,
-        'selected_manufacturer': selected_manufacturer,
-        'manufacturer_products': manufacturer_products,
-        'switch_target_manufacturers': switch_target_manufacturers,
-        'title': 'Add Manufacturer',
-    }
-    return render(request, 'inventory/add_manufacturer.html', context)
-
 @login_required
 @permission_required('inventory.add_product', raise_exception=True)
 def add_product(request):
     """Add new product to inventory"""
+    selected_manufacturer_id = request.GET.get('manufacturer') or request.POST.get('manufacturer')
     if request.method == 'POST':
         form = ProductForm(request.POST)
         if form.is_valid():
             product = form.save()
             messages.success(request, f'Product "{product.name}" added successfully!')
-            return redirect('product_list')
+            redirect_url = reverse('product_list')
+            if selected_manufacturer_id:
+                redirect_url = f"{redirect_url}?manufacturer={selected_manufacturer_id}"
+            return redirect(redirect_url)
+        messages.error(request, 'Please correct the highlighted errors before saving the product.')
     else:
-        form = ProductForm()
+        form = ProductForm(initial={'manufacturer': selected_manufacturer_id} if selected_manufacturer_id else None)
     
-    context = {'form': form, 'title': 'Add New Product'}
+    context = {'form': form, 'title': 'Add New Product', 'selected_manufacturer_id': str(selected_manufacturer_id) if selected_manufacturer_id else ''}
     return render(request, 'inventory/add_product.html', context)
 
 
 @login_required
+def manufacturer_list(request):
+    manufacturer_scopes = _build_manufacturer_scopes()
+    context = {'manufacturer_scopes': manufacturer_scopes}
+    return render(request, 'inventory/manufacturer_list.html', context)
+
+
+@login_required
+@permission_required('inventory.change_product', raise_exception=True)
+def manufacturer_product_list(request, manufacturer_key):
+    scopes = _build_manufacturer_scopes()
+    selected_scope = next((scope for scope in scopes if scope['key'] == manufacturer_key), None)
+    if not selected_scope:
+        messages.error(request, 'Manufacturer not found.')
+        return redirect('manufacturer_list')
+
+    products = Product.objects.filter(
+        is_active=True,
+        manufacturer_id__in=selected_scope['manufacturer_ids'],
+    ).select_related('manufacturer').order_by('name', 'sku')
+
+    if request.method == 'POST':
+        updates = []
+        errors = []
+
+        for product in products:
+            field_name = f'cost_price_{product.id}'
+            raw_value = (request.POST.get(field_name) or '').strip()
+            if raw_value == '':
+                errors.append(f'Cost price is required for {product.name}.')
+                continue
+
+            try:
+                new_cost_price = Decimal(raw_value)
+            except InvalidOperation:
+                errors.append(f'Invalid cost price for {product.name}.')
+                continue
+
+            if new_cost_price < 0:
+                errors.append(f'Cost price cannot be negative for {product.name}.')
+                continue
+
+            if new_cost_price != product.cost_price:
+                product.cost_price = new_cost_price
+                updates.append(product)
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+        else:
+            if updates:
+                Product.objects.bulk_update(updates, ['cost_price', 'updated_at'])
+                messages.success(request, f'Updated cost price for {len(updates)} product(s).')
+            else:
+                messages.info(request, 'No cost price changes to save.')
+            return redirect('manufacturer_product_list', manufacturer_key=manufacturer_key)
+
+    context = {
+        'manufacturer_scope': selected_scope,
+        'products': products,
+    }
+    return render(request, 'inventory/manufacturer_product_list.html', context)
+
+
+@login_required
+def add_manufacturer(request):
+    if request.method == 'POST':
+        form = ManufacturerForm(request.POST)
+        if form.is_valid():
+            manufacturer = form.save()
+            messages.success(request, f'Manufacturer "{manufacturer.name}" added successfully!')
+            return redirect('manufacturer_list')
+        messages.error(request, 'Please correct the highlighted errors before saving the manufacturer.')
+    else:
+        form = ManufacturerForm()
+
+    context = {'form': form, 'title': 'Add Manufacturer'}
+    return render(request, 'inventory/add_manufacturer.html', context)
+
+
+@login_required
 def product_list(request):
-    """List all products with management options"""
-    products = Product.objects.filter(is_active=True).select_related('manufacturer').order_by('sku')
-    
+    """List products, optionally filtered by manufacturer."""
+    # Normalize legacy category labels so old rows stop surfacing removed labels.
+    Product.objects.filter(category__iendswith='corner').update(category='Indian Kulfi')
+
+    manufacturer_id = request.GET.get('manufacturer')
+    manufacturer = None
+    products_qs = Product.objects.filter(is_active=True).select_related('manufacturer').order_by('sku')
+
+    if manufacturer_id:
+        try:
+            manufacturer = Manufacturer.objects.get(pk=manufacturer_id, is_active=True)
+            products_qs = products_qs.filter(manufacturer=manufacturer)
+        except Manufacturer.DoesNotExist:
+            manufacturer = None
+            products_qs = Product.objects.none()
+
     # Pagination
-    paginator = Paginator(products, 25)
+    paginator = Paginator(products_qs, 25)
     page_number = request.GET.get('page', 1)
     try:
         paginated_products = paginator.page(page_number)
@@ -588,13 +409,66 @@ def product_list(request):
         paginated_products = paginator.page(1)
     except EmptyPage:
         paginated_products = paginator.page(paginator.num_pages)
-    
+
+    manufacturers = Manufacturer.objects.filter(is_active=True).order_by('name')
     context = {
         'products': paginated_products,
         'paginator': paginator,
         'page_number': paginated_products.number,
+        'manufacturers': manufacturers,
+        'selected_manufacturer': manufacturer,
+        'selected_manufacturer_id': str(manufacturer.id) if manufacturer else '',
     }
     return render(request, 'inventory/product_list.html', context)
+
+
+@login_required
+@permission_required('inventory.change_product', raise_exception=True)
+def move_product(request, product_id):
+    product = get_object_or_404(Product.objects.select_related('manufacturer'), pk=product_id)
+
+    if request.method == 'POST':
+        form = ProductMoveForm(request.POST)
+        if form.is_valid():
+            target_manufacturer = form.cleaned_data['manufacturer']
+            cost_price = form.cleaned_data['cost_price']
+
+            if product.manufacturer_id == target_manufacturer.id:
+                messages.info(request, f'Product "{product.name}" is already under {target_manufacturer.name}.')
+                return redirect('product_list')
+
+            conflict = Product.objects.filter(
+                manufacturer=target_manufacturer,
+                name__iexact=product.name,
+            ).exclude(pk=product.pk).exists()
+            if conflict:
+                messages.error(
+                    request,
+                    f'A product named "{product.name}" already exists under {target_manufacturer.name}. Rename it first or update that record instead.'
+                )
+                return redirect('product_list')
+
+            product.manufacturer = target_manufacturer
+            product.cost_price = cost_price
+            product.save(update_fields=['manufacturer', 'cost_price', 'updated_at'])
+            messages.success(
+                request,
+                f'Product "{product.name}" moved to {target_manufacturer.name}. Selling price was kept unchanged.'
+            )
+            return redirect('product_list')
+    else:
+        initial_cost_price = product.cost_price
+        form = ProductMoveForm(initial={
+            'manufacturer': product.manufacturer,
+            'cost_price': initial_cost_price,
+        })
+
+    context = {
+        'form': form,
+        'product': product,
+        'title': f'Move {product.name}',
+    }
+    return render(request, 'inventory/move_product.html', context)
 
 @login_required
 @permission_required('inventory.change_product', raise_exception=True)
@@ -608,6 +482,7 @@ def edit_product(request, product_id):
             product = form.save()
             messages.success(request, f'Product "{product.name}" updated successfully!')
             return redirect('inventory_list')
+        messages.error(request, 'Please correct the highlighted errors before updating the product.')
     else:
         form = ProductForm(instance=product)
     
@@ -872,8 +747,8 @@ def inventory_list(request):
         '-name': '-name',
         'sku': 'sku',
         '-sku': '-sku',
-        'current_stock': 'stock',
-        '-current_stock': '-stock',
+        'current_stock': 'display_stock',
+        '-current_stock': '-display_stock',
         'reorder_level': 'reorder_level',
         '-reorder_level': '-reorder_level',
         'cost_price': 'cost_price',
@@ -885,36 +760,15 @@ def inventory_list(request):
     products_ordered = list(products.order_by('sku'))
     stock_map = get_stock_as_of_date_map(products_ordered, selected_date) if selected_date else {}
 
-    grouped_products_map = {}
+    # Ensure all products have display_stock set
     for product in products_ordered:
-        display_stock = max(0, stock_map.get(product.id, 0)) if selected_date else max(0, product.current_stock)
-        display_name = normalize_sales_product_name(product.name)
-        group_key = display_name.lower()
-
-        if group_key not in grouped_products_map:
-            grouped_products_map[group_key] = {
-                'name': display_name,
-                'stock': 0,
-                'reorder_level': product.reorder_level,
-                'cost_price': product.cost_price,
-                'selling_price': product.selling_price,
-                'representative_product': product,
-                'representative_stock': display_stock,
-                'products': [],
-            }
-
-        group = grouped_products_map[group_key]
-        group['stock'] += display_stock
-        group['products'].append(product)
-
-        current_rank = (group['representative_stock'], -len(group['representative_product'].sku or ''))
-        candidate_rank = (display_stock, -len(product.sku or ''))
-        if candidate_rank > current_rank:
-            group['representative_product'] = product
-            group['representative_stock'] = display_stock
-            group['reorder_level'] = product.reorder_level
-            group['cost_price'] = product.cost_price
-            group['selling_price'] = product.selling_price
+        if selected_date:
+            product.display_stock = max(0, stock_map.get(product.id, 0))
+        else:
+            product.display_stock = max(0, product.current_stock)
+        # Remove 'KC' from product name for display
+        if 'KC' in product.name:
+            product.name = product.name.replace('KC', '').strip()
 
     movement_product_ids = set()
     if movement_filter:
@@ -929,41 +783,38 @@ def inventory_list(request):
         )
 
     product_list = []
-    for group in grouped_products_map.values():
-        representative = group['representative_product']
+    for product in products_ordered:
+        display_stock = product.display_stock
 
         movement_exists = True
         if movement_filter:
-            movement_exists = any(product.id in movement_product_ids for product in group['products'])
+            movement_exists = product.id in movement_product_ids
 
         if not movement_exists:
             continue
 
-        if status_filter == 'low_stock' and group['stock'] > group['reorder_level']:
+        if status_filter == 'low_stock' and display_stock > product.reorder_level:
             continue
-        if status_filter == 'in_stock' and group['stock'] <= group['reorder_level']:
+        if status_filter == 'in_stock' and display_stock <= product.reorder_level:
             continue
 
-        group['sku'] = representative.sku
-        group['category'] = representative.category
-        group['product_id'] = representative.id
-        group['display_stock'] = group['stock']
-        product_list.append(group)
+        product_list.append(product)
 
     sort_key = sort_options.get(sort_by, 'sku')
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
 
-    def _inventory_display_sort_key(product_row):
-        return get_flavor_display_sort_key(
-            product_row.get('name', ''),
-            product_row.get('sku') or '',
-        )
-
+    # Custom display order when sorting by SKU (default view)
+    _KULFI_SKU_ORDER = [
+        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
+        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
+        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    ]
     if sort_attr == 'sku' and not reverse_sort:
-        product_list.sort(key=_inventory_display_sort_key)
+        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
+        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
     else:
-        product_list.sort(key=lambda product: product[sort_attr], reverse=reverse_sort)
+        product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
     # Calculate totals from source data with proper display_stock
     # Recalculate to ensure accuracy with filtered product_list
@@ -972,10 +823,13 @@ def inventory_list(request):
     total_sales_price = Decimal('0.0')
     
     for product in product_list:
-        qty = product['stock']
+        # Use display_stock which is the calculated stock for the selected date
+        qty = product.display_stock if hasattr(product, 'display_stock') else (
+            stock_map.get(product.id, 0) if selected_date else product.current_stock
+        )
         total_stock += qty
-        total_cost_price += Decimal(qty) * product['representative_product'].cost_price
-        total_sales_price += Decimal(qty) * product['selling_price']
+        total_cost_price += Decimal(qty) * product.cost_price
+        total_sales_price += Decimal(qty) * product.selling_price
 
     paginator = Paginator(product_list, per_page)
     page_number = request.GET.get('page', 1)
@@ -1104,13 +958,15 @@ def _build_inventory_export_context(request):
     reverse_sort = sort_key.startswith('-')
     sort_attr = sort_key[1:] if reverse_sort else sort_key
 
+    # Custom display order when sorting by SKU (default view)
+    _KULFI_SKU_ORDER = [
+        'IK0001', 'IK0004', 'IK0005', 'IK0002', 'IK0003', 'IK0006',
+        'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
+        'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
+    ]
     if sort_attr == 'sku' and not reverse_sort:
-        product_list.sort(
-            key=lambda product: get_flavor_display_sort_key(
-                product.name,
-                product.sku,
-            )
-        )
+        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
+        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
     else:
         product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
@@ -1340,9 +1196,21 @@ def print_inventory_csv(request):
 
 @login_required
 def quick_inventory_entry(request):
-    """Quick inventory entry with batch product movements"""
+    """Quick inventory entry with manufacturer-filtered product rows."""
+    manufacturers = Manufacturer.ensure_defaults()
+    selected_movement_date_raw = request.POST.get('movement_date') if request.method == 'POST' else request.GET.get('movement_date', '')
+    selected_manufacturer_name = (request.POST.get('selected_manufacturer') if request.method == 'POST' else request.GET.get('manufacturer', '') or '').strip()
+    selected_manufacturer = _get_manufacturer_by_name(selected_manufacturer_name)
+
+    if selected_movement_date_raw:
+        try:
+            selected_movement_date = datetime.strptime(selected_movement_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            selected_movement_date = None
+    else:
+        selected_movement_date = None
+
     if request.method == 'POST':
-        selected_manufacturer = (request.POST.get('selected_manufacturer') or '').strip()
         products = request.POST.getlist('product[]')
         movement_types = request.POST.getlist('movement_type[]')
         adjustment_modes = request.POST.getlist('adjustment_mode[]')
@@ -1358,21 +1226,24 @@ def quick_inventory_entry(request):
         overall_total_value = Decimal('0.0')
         recorded_items = []
 
+        if not selected_manufacturer:
+            messages.error(request, 'Please select a valid manufacturer.')
+            return redirect('quick_inventory_entry')
+
         for i, product_id in enumerate(products):
             if not product_id:
                 continue
 
-            try:
-                product = Product.objects.get(pk=product_id, is_active=True)
-            except Product.DoesNotExist:
-                errors.append(f"Product ID {product_id} not found")
+            product = Product.objects.filter(pk=product_id, is_active=True, manufacturer=selected_manufacturer).first()
+            if not product:
+                errors.append(f'Product ID {product_id} not found for {selected_manufacturer.name}')
                 continue
 
             try:
                 qty_str = quantities[i].strip() if i < len(quantities) else ''
                 quantity = int(qty_str) if qty_str else 0
             except (ValueError, TypeError):
-                errors.append(f"{product.name}: Invalid quantity")
+                errors.append(f'{product.name}: Invalid quantity')
                 continue
 
             if quantity <= 0:
@@ -1381,29 +1252,14 @@ def quick_inventory_entry(request):
             movement_type = movement_types[i] if i < len(movement_types) else 'IN'
             adjustment_mode = adjustment_modes[i] if i < len(adjustment_modes) else 'PLUS'
             quantity_unit = quantity_units[i] if i < len(quantity_units) else 'NOS'
-            # Always derive base cost from the selected product on the server.
-            # This avoids mismatches from stale/tampered form values.
             cost_price = product.cost_price if product.cost_price is not None else Decimal('0.0')
 
-            # Enforce manufacturer-specific cost maps so correct prices are always applied.
-            normalized_name = normalize_sales_product_name(product.name).lower()
-            if selected_manufacturer == 'Indian Kulfi':
-                mapped_cost = IK_QUICK_ENTRY_COST_BY_NAME.get(normalized_name)
-                if mapped_cost is not None:
-                    cost_price = mapped_cost
-            elif selected_manufacturer == 'Kulfi Corner':
-                mapped_cost = KC_QUICK_ENTRY_COST_BY_NAME.get(normalized_name)
-                if mapped_cost is not None:
-                    cost_price = mapped_cost
-
-            # Convert to actual units: pack = 6 units
             if quantity_unit == 'PACK':
                 effective_quantity = quantity * 6
             else:
                 effective_quantity = quantity
 
             movement_date_str = movement_dates[i] if i < len(movement_dates) else ''
-            
             movement_value = Decimal(effective_quantity) * cost_price
 
             if movement_date_str:
@@ -1414,9 +1270,8 @@ def quick_inventory_entry(request):
             else:
                 movement_date = timezone.now().date()
 
-            # Stock operations
             if movement_type == 'OUT' and effective_quantity > product.current_stock:
-                errors.append(f"{product.name}: Insufficient stock for outbound movement. Available {product.current_stock}, requested {effective_quantity}")
+                errors.append(f'{product.name}: Insufficient stock for outbound movement. Available {product.current_stock}, requested {effective_quantity}')
                 continue
 
             inventory_quantity = effective_quantity
@@ -1428,7 +1283,7 @@ def quick_inventory_entry(request):
                 stock_on_movement_date = calculate_stock_as_of_date(product, movement_date)
                 if adjustment_mode == 'MINUS':
                     if effective_quantity > stock_on_movement_date:
-                        errors.append(f"{product.name}: Cannot subtract {effective_quantity} on {movement_date}. Available stock on that date is {stock_on_movement_date}")
+                        errors.append(f'{product.name}: Cannot subtract {effective_quantity} on {movement_date}. Available stock on that date is {stock_on_movement_date}')
                         continue
                     adjusted_stock_on_date = stock_on_movement_date - effective_quantity
                     product.current_stock -= effective_quantity
@@ -1437,21 +1292,14 @@ def quick_inventory_entry(request):
                     adjusted_stock_on_date = stock_on_movement_date + effective_quantity
                     product.current_stock += effective_quantity
                     adjustment_sign = '+'
-
-                # Keep ADJUSTMENT quantity as absolute stock snapshot after applying +/- change on movement_date.
                 inventory_quantity = adjusted_stock_on_date
             else:
-                errors.append(f"{product.name}: Unsupported movement type {movement_type}")
+                errors.append(f'{product.name}: Unsupported movement type {movement_type}')
                 continue
 
-            # Persist inventory movement and product stock.
-            # Stamp the manufacturer in notes so stock reports can identify it reliably.
-            if selected_manufacturer:
-                manufacturer_stamp = f'Manufacturer: {selected_manufacturer}'
-            else:
-                manufacturer_stamp = ''
+            manufacturer_stamp = f'Manufacturer: {selected_manufacturer.name}'
             if movement_type == 'ADJUSTMENT':
-                movement_notes = f'{manufacturer_stamp} | Adjustment mode: {adjustment_sign}{effective_quantity}' if manufacturer_stamp else f'Adjustment mode: {adjustment_sign}{effective_quantity}'
+                movement_notes = f'{manufacturer_stamp} | Adjustment mode: {adjustment_sign}{effective_quantity}'
             else:
                 movement_notes = manufacturer_stamp
 
@@ -1463,10 +1311,10 @@ def quick_inventory_entry(request):
                 movement_date=movement_date,
                 reference_document=f'Quick entry {movement_date}',
                 notes=movement_notes,
-                created_by=request.user
+                created_by=request.user,
             )
             product.current_stock = max(0, product.current_stock)
-            product.save()
+            product.save(update_fields=['current_stock', 'updated_at'])
             recorded_items.append({
                 'name': product.name,
                 'sku': product.sku,
@@ -1480,7 +1328,6 @@ def quick_inventory_entry(request):
                 'movement_date': str(movement_date),
             })
 
-            # Success-only summary totals for the post-submit green card.
             product_count += 1
             if quantity_unit == 'PACK':
                 total_packs += quantity
@@ -1490,10 +1337,8 @@ def quick_inventory_entry(request):
 
         if created_count > 0:
             messages.success(request, f'Successfully recorded {created_count} movement(s).')
-
         for error in errors:
             messages.warning(request, error)
-
         if created_count == 0 and not errors:
             messages.info(request, 'No inventory movements were recorded.')
 
@@ -1505,100 +1350,15 @@ def quick_inventory_entry(request):
             'overall_total_value': str(overall_total_value),
             'created_count': created_count,
         }
-        return redirect('quick_inventory_entry')
+        return redirect(f"{reverse('quick_inventory_entry')}?manufacturer={selected_manufacturer.name}&movement_date={selected_movement_date_raw or ''}")
 
-    selected_movement_date_raw = request.GET.get('movement_date', '')
-    selected_manufacturer = request.GET.get('manufacturer', '')
-    selected_movement_date = None
-    if selected_movement_date_raw:
-        try:
-            selected_movement_date = datetime.strptime(selected_movement_date_raw, '%Y-%m-%d').date()
-        except ValueError:
-            selected_movement_date = None
-
-    # Build product groups: one entry per normalized flavor name, with per-manufacturer product bindings.
-    all_products = list(Product.objects.filter(is_active=True).order_by('sku'))
-    stock_map = (
-        get_stock_as_of_date_map(all_products, selected_movement_date)
-        if selected_movement_date else
-        {product.id: product.current_stock for product in all_products}
-    )
-
-    manufacturer_names = []
-    seen_manufacturers = set()
-    for product in all_products:
-        manufacturer_name = get_product_manufacturer_name(product)
-        if manufacturer_name and manufacturer_name not in seen_manufacturers:
-            seen_manufacturers.add(manufacturer_name)
-            manufacturer_names.append(manufacturer_name)
-
-    manufacturer_names.sort()
-
-    product_groups_map = {}
-    for product in all_products:
-        norm_name = normalize_sales_product_name(product.name)
-        norm_key = norm_name.lower()
-        product_stock = max(0, stock_map.get(product.id, 0))
-        manufacturer_name = get_product_manufacturer_name(product)
-
-        if norm_key not in product_groups_map:
-            product_groups_map[norm_key] = {
-                'name': norm_name,
-                'total_stock': 0,
-                'manufacturer_rows': [],
-            }
-
-        group = product_groups_map[norm_key]
-        row_by_manufacturer = {row['manufacturer']: row for row in group['manufacturer_rows']}
-        if manufacturer_name not in row_by_manufacturer:
-            row_by_manufacturer[manufacturer_name] = {
-                'manufacturer': manufacturer_name,
-                'product': product,
-                'stock': 0,
-                'cost_override': None,
-            }
-
-        m_row = row_by_manufacturer[manufacturer_name]
-        m_row['stock'] += product_stock
-
-        current_product = m_row['product']
-        if current_product is None:
-            m_row['product'] = product
-        else:
-            current_is_nb = (current_product.sku or '').strip().upper().startswith('NB')
-            candidate_is_nb = (product.sku or '').strip().upper().startswith('NB')
-            if current_is_nb and not candidate_is_nb:
-                m_row['product'] = product
-
-        if manufacturer_name == 'Indian Kulfi':
-            m_row['cost_override'] = IK_QUICK_ENTRY_COST_BY_NAME.get(norm_key)
-        elif manufacturer_name == 'Kulfi Corner':
-            m_row['cost_override'] = KC_QUICK_ENTRY_COST_BY_NAME.get(norm_key)
-
-        group['manufacturer_rows'] = sorted(row_by_manufacturer.values(), key=lambda row: row['manufacturer'])
-
-        group['total_stock'] += product_stock
-
-    product_groups = sorted(
-        product_groups_map.values(),
-        key=lambda group: get_flavor_display_sort_key(
-            group['name'],
-            min(
-                ((row['product'].sku if row['product'] else 'ZZZ999') for row in group['manufacturer_rows']),
-                default='ZZZ999',
-            ),
-        ),
-    )
-
-    if selected_manufacturer and selected_manufacturer not in manufacturer_names:
-        selected_manufacturer = ''
-
+    manufacturer_products = _get_products_for_manufacturer(selected_manufacturer)
     context = {
-        'product_groups': product_groups,
-        'manufacturer_options': manufacturer_names,
+        'manufacturers': manufacturers,
+        'manufacturer_products': manufacturer_products,
         'today': timezone.now().date(),
         'selected_movement_date': selected_movement_date,
-        'selected_manufacturer': selected_manufacturer,
+        'selected_manufacturer': selected_manufacturer.name if selected_manufacturer else '',
         'recorded_items': request.session.pop('recorded_items', None),
         'recorded_summary': request.session.pop('recorded_summary', None),
     }
@@ -1744,98 +1504,33 @@ def inventory_date_history(request):
 
 @login_required
 def stock_order(request):
-    """Stock order form with dynamic manufacturer/product catalog."""
-    catalog = OrderedDict()
-    for product in Product.objects.filter(is_active=True).select_related('manufacturer').order_by('sku', 'name'):
-        manufacturer_name = get_product_manufacturer_name(product) or 'Unassigned'
-        display_name = normalize_sales_product_name(product.name)
-        if manufacturer_name not in catalog:
-            catalog[manufacturer_name] = OrderedDict()
-
-        if display_name not in catalog[manufacturer_name]:
-            catalog[manufacturer_name][display_name] = {
-                'name': display_name,
-                'cost': float(product.cost_price or 0),
-                'units_per_lot': get_stock_order_units_per_lot(display_name),
-            }
-
-    stock_order_catalog = {}
-    for manufacturer, products in sorted(catalog.items(), key=lambda item: item[0]):
-        product_rows = list(products.values())
-        if 'bowring' in (manufacturer or '').lower():
-            product_rows.sort(key=lambda item: get_flavor_display_sort_key(item['name']))
-        stock_order_catalog[manufacturer] = product_rows
-
+    """Stock order form for manufacturer-scoped product lists."""
     today = date.today().strftime('%Y-%m-%d')
-    return render(
-        request,
-        'inventory/stock_order.html',
-        {
-            'today': today,
-            'manufacturer_options': list(stock_order_catalog.keys()),
-            'stock_order_catalog_json': json.dumps(stock_order_catalog),
-        },
-    )
+    manufacturers = Manufacturer.ensure_defaults()
+    manufacturer_products = {}
+    for manufacturer in manufacturers:
+        manufacturer_products[manufacturer.name] = [
+            {
+                'name': product.name,
+                'cost': float(product.cost_price or 0),
+            }
+            for product in _get_products_for_manufacturer(manufacturer)
+        ]
+    return render(request, 'inventory/stock_order.html', {
+        'today': today,
+        'manufacturers': manufacturers,
+        'manufacturer_products_json': json.dumps(manufacturer_products),
+    })
 
 # ==================== SALES MODULE ====================
 
 def normalize_sales_product_name(name):
     """Normalize product name for manufacturer-agnostic sales grouping."""
     cleaned_name = re.sub(r'\s+', ' ', (name or '').strip())
-    # Remove leading manufacturer codes used in product names (e.g., 'IK Malai', 'KC Malai', 'NB013 Malai').
-    cleaned_name = re.sub(r'^(?:[A-Z]{2,}\d*\s*[-:]*\s*)+', '', cleaned_name)
+    # Remove leading manufacturer tokens used in product names (e.g., 'IK Malai', 'KC Malai').
+    cleaned_name = re.sub(r'^(IK|KC)\s*[-:]*\s*', '', cleaned_name, flags=re.IGNORECASE)
     cleaned_name = re.sub(r'\s*\((IK|KC)\)$', '', cleaned_name, flags=re.IGNORECASE)
     return cleaned_name.strip()
-
-
-# Canonical kulfi flavor order requested for stock-facing screens.
-FLAVOR_DISPLAY_ORDER = [
-    'malai',
-    'pista badam',
-    'chocolate',
-    'kesar badam',
-    'kesar pista',
-    'strawberry',
-    'dry fruit',
-    'black currant',
-    'litchi',
-    'caramel coffee',
-    'rose',
-    'mango malai',
-    'butterscotch',
-    'coconut',
-    'guava',
-    'kesar kajoor',
-    'blueberry',
-    'custard apple',
-    'gulkand',
-    'pot',
-]
-FLAVOR_DISPLAY_INDEX = {
-    name: index for index, name in enumerate(FLAVOR_DISPLAY_ORDER)
-}
-FLAVOR_DISPLAY_ALIASES = {
-    'blackcurrent': 'black currant',
-    'blackcurrant': 'black currant',
-    'black current': 'black currant',
-    'butter scotch': 'butterscotch',
-    'blue berry': 'blueberry',
-    'elachi': 'elaichi',
-}
-
-
-def canonicalize_flavor_name(product_name):
-    normalized_name = normalize_sales_product_name(product_name).strip().lower()
-    return FLAVOR_DISPLAY_ALIASES.get(normalized_name, normalized_name)
-
-
-def get_flavor_display_sort_key(product_name, sort_sku=''):
-    canonical_name = canonicalize_flavor_name(product_name)
-    return (
-        FLAVOR_DISPLAY_INDEX.get(canonical_name, len(FLAVOR_DISPLAY_INDEX)),
-        canonical_name,
-        sort_sku or '',
-    )
 
 
 # Fixed product order required for View Sales by Date, Daily Report, and Weekly Report.
@@ -1912,14 +1607,35 @@ DAILY_SALES_PRODUCT_DISPLAY_ALIASES = {
     'blackcurrent': 'black currant',
     'straswberry': 'strawberry',
 }
-SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = FLAVOR_DISPLAY_ORDER
+SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = [
+    'malai',
+    'pista badam',
+    'chocolate',
+    'kesar badam',
+    'kesar pista',
+    'strawberry',
+    'dry fruit',
+    'black currant',
+    'litchi',
+    'caramel coffee',
+    'rose',
+    'mango malai',
+    'butterscotch',
+    'coconut',
+    'elaichi',
+    'guava',
+    'paan',
+    'kesar kajoor',
+]
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX = {
     name: index for index, name in enumerate(SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER)
 }
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ALIASES = {
-    **FLAVOR_DISPLAY_ALIASES,
+    'black current': 'black currant',
+    'blackcurrant': 'black currant',
+    'butter scotch': 'butterscotch',
+    'elachi': 'elaichi',
     'kajoor': 'kesar kajoor',
-    'kesar kajur': 'kesar kajoor',
     'straswberry': 'strawberry',
 }
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS = {
@@ -1937,18 +1653,26 @@ SALES_STOCK_TAKEN_PRODUCT_DISPLAY_LABELS = {
     'mango malai': 'MANGO MALAI',
     'butterscotch': 'BUTTERSCOTCH',
     'coconut': 'COCONUT',
+    'elaichi': 'ELAICHI',
     'guava': 'GUAVA',
+    'paan': 'PAAN',
     'kesar kajoor': 'KESAR KAJOOR',
-    'blueberry': 'BLUEBERRY',
-    'custard apple': 'CUSTARD APPLE',
-    'gulkand': 'GULKAND',
-    'pot': 'POT',
 }
 
 
 def get_sales_stock_taken_product_name_key(product_name):
     normalized_name = (product_name or '').strip().lower()
     return SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ALIASES.get(normalized_name, normalized_name)
+
+
+def get_daily_sales_product_sort_key(product_name, sort_sku=''):
+    normalized_name = normalize_sales_product_name(product_name).lower()
+    canonical_name = DAILY_SALES_PRODUCT_DISPLAY_ALIASES.get(normalized_name, normalized_name)
+    return (
+        DAILY_SALES_PRODUCT_DISPLAY_INDEX.get(canonical_name, len(DAILY_SALES_PRODUCT_DISPLAY_INDEX)),
+        canonical_name,
+        sort_sku or '',
+    )
 
 
 def get_sales_stock_taken_product_sort_key(product_name, sort_sku=''):
@@ -1994,12 +1718,8 @@ def build_sales_groups(sales_qs, include_date=False):
 
         grouped[group_key]['quantity'] += sale.quantity
         grouped[group_key]['total_price'] += sale.total_price
-        if sale.recorded_by is not None:
-            grouped[group_key]['recorded_by'].add(
-                sale.recorded_by.get_full_name() or sale.recorded_by.username
-            )
-        else:
-            grouped[group_key]['recorded_by'].add('-'    if sale.recorded_by is not None else '-'
+        grouped[group_key]['recorded_by'].add(
+            sale.recorded_by.get_full_name() or sale.recorded_by.username
         )
         if sale.notes:
             grouped[group_key]['notes'].append(sale.notes)
@@ -2255,21 +1975,6 @@ def quick_sales_entry(request):
 
     if request.method == 'POST':
         action = request.POST.get('action', 'record_sales')
-        selected_salesperson_id = (request.POST.get('salesperson') or '').strip()
-        target_salesperson = request.user
-
-        if request.user.is_staff:
-            if selected_salesperson_id:
-                try:
-                    target_salesperson = User.objects.get(
-                        pk=int(selected_salesperson_id),
-                        is_active=True,
-                        is_staff=False,
-                    )
-                except (User.DoesNotExist, ValueError, TypeError):
-                    target_salesperson = request.user
-                    selected_salesperson_id = ''
-                    messages.warning(request, 'Selected salesperson was not found. Recording sales under your account.')
 
         if request.user.is_staff and action == 'save_stock_taken':
             messages.error(request, 'Stock taken entries are only available for sales users.')
@@ -2511,7 +2216,7 @@ def quick_sales_entry(request):
                         quantity=allocated_quantity,
                         unit_price=product.selling_price,
                         sale_date=sale_date,
-                        recorded_by=target_salesperson,
+                        recorded_by=request.user,
                         notes=notes,
                     )
 
@@ -2582,24 +2287,6 @@ def quick_sales_entry(request):
     else:
         selected_sales_date = timezone.now().date()
 
-    selected_salesperson_id = ''
-    selected_salesperson = None
-    salespeople = None
-    if request.user.is_staff:
-        selected_salesperson_id = (request.GET.get('salesperson') or '').strip()
-        salespeople = User.objects.filter(is_staff=False, is_active=True).order_by('first_name', 'username')
-        if selected_salesperson_id:
-            try:
-                selected_salesperson = User.objects.get(
-                    pk=int(selected_salesperson_id),
-                    is_active=True,
-                    is_staff=False,
-                )
-            except (User.DoesNotExist, ValueError, TypeError):
-                selected_salesperson = None
-                selected_salesperson_id = ''
-                messages.warning(request, 'Selected salesperson was not found. Showing your own records.')
-
     grouped_products_for_form = build_grouped_products_for_sales_date(selected_sales_date)
     prefill_from_stock_taken = request.GET.get('prefill_from_stock_taken') == '1'
 
@@ -2648,9 +2335,6 @@ def quick_sales_entry(request):
         'total_stock_taken_for_date': total_stock_taken_for_date,
         'total_combined_stock': total_combined_stock,
         'prefill_from_stock_taken': prefill_from_stock_taken,
-        'salespeople': salespeople,
-        'selected_salesperson_id': selected_salesperson_id,
-        'selected_salesperson': selected_salesperson,
     }
     return render(request, 'inventory/quick_sales_entry.html', context)
 
@@ -2681,32 +2365,21 @@ def view_sales(request):
     previous_date = selected_date - timedelta(days=1)
     next_date = selected_date + timedelta(days=1)
 
-    salesperson_ids_for_date = Sales.objects.filter(
-        sale_date=selected_date,
-        recorded_by__isnull=False,
-    ).values_list('recorded_by_id', flat=True).distinct()
+    salespeople = User.objects.filter(
+        id__in=Sales.objects.filter(
+            sale_date=selected_date,
+            recorded_by__isnull=False,
+        ).values_list('recorded_by_id', flat=True).distinct()
+    ).order_by('first_name', 'username')
 
-    selected_salesperson_int = None
     salesperson_filter = None
     if selected_salesperson_id:
         try:
-            selected_salesperson_int = int(selected_salesperson_id)
-            salesperson_filter = User.objects.filter(pk=selected_salesperson_int).first()
-            if not salesperson_filter:
-                selected_salesperson_id = ''
-                if date_submitted:
-                    messages.warning(request, 'Selected salesperson was not found.')
-        except ValueError:
+            salesperson_filter = salespeople.get(pk=int(selected_salesperson_id))
+        except (ValueError, User.DoesNotExist):
             selected_salesperson_id = ''
             if date_submitted:
-                messages.warning(request, 'Selected salesperson was not found.')
-
-    salespeople_filter = Q(id__in=salesperson_ids_for_date)
-    if selected_salesperson_int and salesperson_filter:
-        # Keep selected salesperson visible in dropdown even if their sales were just deleted.
-        salespeople_filter |= Q(id=selected_salesperson_int)
-
-    salespeople = User.objects.filter(salespeople_filter).order_by('first_name', 'username')
+                messages.warning(request, 'Selected salesperson was not found for this date.')
 
     if date_submitted:
         # Get sales for the selected date and group by product name.
@@ -2902,7 +2575,7 @@ def delete_grouped_sale(request):
 @login_required
 @require_POST
 def delete_sales_for_date(request):
-    """Delete sales recorded on a selected date (optionally by salesperson) and rebuild current stock."""
+    """Delete all sales recorded on a selected date and rebuild current stock."""
     if not request.user.is_staff:
         messages.error(request, 'You do not have permission to delete sales.')
         return redirect('view_sales')
@@ -2921,20 +2594,6 @@ def delete_sales_for_date(request):
         return redirect('view_sales')
 
     sales_qs = Sales.objects.filter(sale_date=selected_date)
-
-    salesperson_name = ''
-    if selected_salesperson_id:
-        try:
-            salesperson_id = int(selected_salesperson_id)
-        except ValueError:
-            messages.error(request, 'Invalid salesperson for deletion.')
-            return redirect(f"{reverse('view_sales')}?{urlencode({'date': selected_date.isoformat()})}")
-
-        sales_qs = sales_qs.filter(recorded_by_id=salesperson_id)
-        salesperson = User.objects.filter(id=salesperson_id).first()
-        if salesperson:
-            salesperson_name = salesperson.get_full_name() or salesperson.username
-
     sale_ids = list(sales_qs.values_list('id', flat=True))
 
     if not sale_ids:
@@ -2950,21 +2609,10 @@ def delete_sales_for_date(request):
             Sales.objects.filter(id__in=sale_ids).delete()
             _recalculate_current_stock_for_products(touched_product_ids)
 
-        if salesperson_name:
-            messages.success(
-                request,
-                f"Deleted {deleted_entries} sales entries for {salesperson_name} on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated."
-            )
-        elif selected_salesperson_id:
-            messages.success(
-                request,
-                f"Deleted {deleted_entries} sales entries for the selected salesperson on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated."
-            )
-        else:
-            messages.success(
-                request,
-                f'Deleted all {deleted_entries} sales entries on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated.'
-            )
+        messages.success(
+            request,
+            f'Deleted all {deleted_entries} sales entries on {selected_date.isoformat()} totaling {deleted_units} units. Inventory recalculated.'
+        )
 
     query_params = {'date': selected_date.isoformat()}
     if selected_salesperson_id:
@@ -3055,15 +2703,13 @@ def get_product_price(request):
 
 @login_required
 def get_next_sku(request):
-    """AJAX endpoint to get next SKU based on selected manufacturer/category."""
-    manufacturer = (request.GET.get('manufacturer') or '').strip()
-    category = (request.GET.get('category') or '').strip()
-    source_value = manufacturer or category
-    if not source_value:
+    """AJAX endpoint to get next SKU based on selected manufacturer."""
+    manufacturer_name = request.GET.get('manufacturer', '')
+    if not manufacturer_name:
         return JsonResponse({'success': False, 'message': 'Manufacturer is required'})
 
-    next_sku = ProductForm.generate_next_sku(source_value)
-    prefix = ProductForm.get_category_prefix(source_value)
+    next_sku = ProductForm.generate_next_sku(manufacturer_name)
+    prefix = ProductForm.get_manufacturer_prefix(manufacturer_name)
     return JsonResponse({'success': True, 'sku': next_sku, 'prefix': prefix})
 
 
@@ -3642,16 +3288,7 @@ def _build_daily_report_context(selected_date):
     total_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
-    total_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
-        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-    )['total']
-    net_profit = total_profit - total_operation_cost + total_operation_income
-
-    # Total quantity sold for the day
-    total_quantity = sales_qs.aggregate(total=Coalesce(Sum('quantity'), 0, output_field=DecimalField()))['total']
-
-    # Revenue minus operation cost (requested card)
-    revenue_minus_operation_cost = total_revenue - total_operation_cost
+    net_profit = total_profit - total_operation_cost
 
     # Calculate total stock as of selected date
     products = Product.objects.filter(is_active=True)
@@ -3663,14 +3300,10 @@ def _build_daily_report_context(selected_date):
         'sales': sales,
         'total_revenue': total_revenue,
         'total_cost': total_cost,
-        'total_cogs': total_cost,
         'total_profit': total_profit,
         'total_operation_cost': total_operation_cost,
-        'total_operation_income': total_operation_income,
-        'revenue_minus_operation_cost': revenue_minus_operation_cost,
         'net_profit': net_profit,
         'total_transactions': len(sales),
-        'total_quantity': total_quantity,
         'total_stock': total_stock,
         'total_combined_stock_taken': total_combined_stock_taken,
     }
@@ -3688,62 +3321,21 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
 
-    total_quantity = sales.aggregate(
-        total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
-    )['total']
-
     total_cost = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in sales)
     total_profit = total_revenue - total_cost
-
-    total_operation_cost = OperationsExpense.objects.filter(
-        operation_date__gte=start_date,
-        operation_date__lte=end_date,
-    ).aggregate(
-        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-    )['total']
-
-    total_operation_income = OperationsIncome.objects.filter(
-        income_date__gte=start_date,
-        income_date__lte=end_date,
-    ).aggregate(
-        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-    )['total']
-
-    total_net_profit = total_profit - total_operation_cost + total_operation_income
 
     daily_data = {}
     for i in range((end_date - start_date).days + 1):
         current_date = start_date + timedelta(days=i)
         daily_sales = sales.filter(sale_date=current_date)
-        daily_quantity = daily_sales.aggregate(
-            total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
-        )['total']
-        daily_revenue = daily_sales.aggregate(
-            total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
-        )['total']
-        daily_cogs = sum(
-            Decimal(sale.quantity) * sale.product.cost_price for sale in daily_sales
-        )
-        daily_operation_cost = OperationsExpense.objects.filter(
-            operation_date=current_date
-        ).aggregate(
-            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-        )['total']
-        daily_operation_income = OperationsIncome.objects.filter(
-            income_date=current_date
-        ).aggregate(
-            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
-        )['total']
-        daily_net_profit = daily_revenue - daily_cogs - daily_operation_cost + daily_operation_income
-
         daily_data[current_date.strftime('%a, %m/%d')] = {
             'count': daily_sales.count(),
-            'quantity': daily_quantity,
-            'revenue': daily_revenue,
-            'cogs': daily_cogs,
-            'operation_cost': daily_operation_cost,
-            'operation_income': daily_operation_income,
-            'net_profit': daily_net_profit,
+            'quantity': daily_sales.aggregate(
+                total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+            )['total'],
+            'revenue': daily_sales.aggregate(
+                total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
+            )['total']
         }
 
     weekly_product_breakdown_map = {}
@@ -3782,15 +3374,9 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
     return {
         'start_date': start_date,
         'end_date': end_date,
-        'total_quantity': total_quantity,
         'total_revenue': total_revenue,
-        'total_cogs': total_cost,
-        # legacy key used by templates and export handlers
         'total_cost': total_cost,
         'total_profit': total_profit,
-        'total_operation_cost': total_operation_cost,
-        'total_operation_income': total_operation_income,
-        'total_net_profit': total_net_profit,
         'total_transactions': sales.count(),
         'daily_data': daily_data,
         'weekly_product_breakdown': weekly_product_breakdown,
@@ -3958,8 +3544,7 @@ def _extract_positive_adjustment_qty(notes):
     return int(match.group(1)) if match else 0
 
 
-def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed', selected_manufacturer=''):
-    selected_manufacturer = (selected_manufacturer or '').strip()
+def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed'):
     movement_types = ['IN']
     if include_positive_adjustments:
         movement_types.append('ADJUSTMENT')
@@ -3968,7 +3553,8 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         movement_type__in=movement_types,
         movement_date__gte=start_date,
         movement_date__lte=end_date,
-    ).select_related('product', 'product__manufacturer', 'created_by').order_by(
+        product__category='Indian Kulfi',
+    ).select_related('product', 'created_by').order_by(
         '-movement_date',
         'product__category',
         'product__sku',
@@ -3978,10 +3564,9 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
     movement_rows = []
     total_quantity = 0
     indian_kulfi_quantity = 0
-    kulfi_corner_quantity = 0
+    new_bowring_quantity = 0
     total_purchase_cost = Decimal('0.0')
     grouped_general_rows = {}
-    manufacturer_set = set()
 
     for movement in raw_movements:
         if movement.movement_type == 'IN':
@@ -3993,16 +3578,19 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
                 continue
             entry_type = 'Positive Adjustment'
 
-        # Use manufacturer stamped at entry time if present; fall back to cost-price detection.
+        # Use manufacturer stamped at entry time if present; otherwise fall back to the linked product.
         resolved_manufacturer = (
             _extract_manufacturer_from_notes(movement.notes)
-            or get_product_manufacturer_name(movement.product)
-            or _identify_manufacturer_from_cost(movement.product.cost_price)
+            or (movement.product.manufacturer.name if movement.product.manufacturer else None)
+            or movement.product.category
         )
-        manufacturer_set.add(resolved_manufacturer)
-
-        if selected_manufacturer and resolved_manufacturer.lower() != selected_manufacturer.lower():
-            continue
+        normalized_resolved = _normalize_manufacturer_name(resolved_manufacturer)
+        if normalized_resolved.endswith(' CORNER'):
+            resolved_manufacturer = 'New Bowring'
+        resolved_manufacturer = {
+            'Indian Kulfi': 'Bowring',
+            'New Bowring': 'New Bowring',
+        }.get(resolved_manufacturer, resolved_manufacturer)
 
         unit_cost_val = movement.unit_cost or movement.product.cost_price
         movement_rows.append({
@@ -4016,10 +3604,10 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
 
         total_quantity += qty_in
         total_purchase_cost += Decimal(qty_in) * unit_cost_val
-        if resolved_manufacturer == 'Indian Kulfi':
+        if resolved_manufacturer == 'Bowring':
             indian_kulfi_quantity += qty_in
-        elif resolved_manufacturer == 'Kulfi Corner':
-            kulfi_corner_quantity += qty_in
+        elif resolved_manufacturer == 'New Bowring':
+            new_bowring_quantity += qty_in
 
         general_key = (
             movement.movement_date,
@@ -4059,13 +3647,11 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         'total_entries': len(movement_rows),
         'total_quantity': total_quantity,
         'indian_kulfi_quantity': indian_kulfi_quantity,
-        'kulfi_corner_quantity': kulfi_corner_quantity,
+        'new_bowring_quantity': new_bowring_quantity,
         'total_purchase_cost': total_purchase_cost,
         'include_positive_adjustments': include_positive_adjustments,
         'general_rows': general_rows,
         'report_mode': report_mode,
-        'manufacturer_options': sorted(manufacturer_set),
-        'selected_manufacturer': selected_manufacturer,
     }
 
 @login_required
@@ -4093,12 +3679,10 @@ def weekly_report(request):
         context = {
             'start_date': '',
             'end_date': '',
-            'total_quantity': 0,
-            'total_revenue': 0,
-            'total_cogs': 0,
-            'total_operation_cost': 0,
-            'total_net_profit': 0,
             'total_transactions': 0,
+            'total_revenue': 0,
+            'total_cost': 0,
+            'total_profit': 0,
             'daily_data': OrderedDict(),
             'weekly_product_breakdown': [],
             'no_filter': True,
@@ -4240,10 +3824,9 @@ def income_statement(request):
 
 @login_required
 def stock_report(request):
-    """Stock-in report by date range for Indian Kulfi and Kulfi Corner."""
+    """Stock-in report by date range for Bowring and New Bowring."""
     start_date_raw = (request.GET.get('start_date') or '').strip()
     end_date_raw = (request.GET.get('end_date') or '').strip()
-    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4258,12 +3841,10 @@ def stock_report(request):
             'total_entries': 0,
             'total_quantity': 0,
             'indian_kulfi_quantity': 0,
-            'kulfi_corner_quantity': 0,
+            'new_bowring_quantity': 0,
             'total_purchase_cost': Decimal('0.0'),
             'include_positive_adjustments': include_positive_adjustments,
             'report_mode': report_mode,
-            'manufacturer_options': [],
-            'selected_manufacturer': selected_manufacturer,
             'no_filter': True,
         }
         return render(request, 'inventory/stock_report.html', context)
@@ -4296,7 +3877,6 @@ def stock_report(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
-        selected_manufacturer=selected_manufacturer,
     )
     context['no_filter'] = False
     return render(request, 'inventory/stock_report.html', context)
@@ -4307,7 +3887,6 @@ def print_stock_report_html(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
-    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4337,7 +3916,6 @@ def print_stock_report_html(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
-        selected_manufacturer=selected_manufacturer,
     )
     context['now'] = timezone.now()
     return render(request, 'inventory/print_stock_report.html', context)
@@ -4348,7 +3926,6 @@ def print_stock_report_pdf(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
-    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4378,7 +3955,6 @@ def print_stock_report_pdf(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
-        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4411,7 +3987,7 @@ def print_stock_report_pdf(request):
             f"<b>Total Entries:</b> {context['total_entries']} | "
             f"<b>Total Qty In:</b> {context['total_quantity']} | "
             f"<b>Indian Kulfi:</b> {context['indian_kulfi_quantity']} | "
-            f"<b>Kulfi Corner:</b> {context['kulfi_corner_quantity']} | "
+            f"<b>New Bowring:</b> {context['new_bowring_quantity']} | "
             f"<b>Total Purchase Cost:</b> Rs.{context['total_purchase_cost']:.2f}"
         )
         elements.append(Paragraph(summary, styles['Normal']))
@@ -4436,7 +4012,7 @@ def print_stock_report_pdf(request):
                 movement = row['movement']
                 data.append([
                     movement.movement_date.strftime('%Y-%m-%d'),
-                    row['resolved_manufacturer'],
+                    movement.product.category,
                     row['entry_type'],
                     movement.product.sku,
                     movement.product.name,
@@ -4478,7 +4054,6 @@ def print_stock_report_excel(request):
     today = timezone.now().date()
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
-    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -4508,7 +4083,6 @@ def print_stock_report_excel(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
-        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4533,7 +4107,7 @@ def print_stock_report_excel(request):
         ws['A3'] = f"Total Entries: {context['total_entries']}"
         ws['A4'] = f"Total Qty In: {context['total_quantity']}"
         ws['A5'] = f"Indian Kulfi Qty: {context['indian_kulfi_quantity']}"
-        ws['A6'] = f"Kulfi Corner Qty: {context['kulfi_corner_quantity']}"
+        ws['A6'] = f"New Bowring Qty: {context['new_bowring_quantity']}"
         ws['A7'] = f"Total Purchase Cost: Rs.{context['total_purchase_cost']:.2f}"
         ws['A8'] = f"Positive Adjustments Included: {'Yes' if include_positive_adjustments else 'No'}"
         ws['A9'] = f"Report Mode: {'General' if report_mode == 'general' else 'Detailed'}"
@@ -4563,7 +4137,7 @@ def print_stock_report_excel(request):
             for row in context['movement_rows']:
                 movement = row['movement']
                 ws.cell(row=row_number, column=1).value = movement.movement_date.strftime('%Y-%m-%d')
-                ws.cell(row=row_number, column=2).value = row['resolved_manufacturer']
+                ws.cell(row=row_number, column=2).value = movement.product.category
                 ws.cell(row=row_number, column=3).value = row['entry_type']
                 ws.cell(row=row_number, column=4).value = movement.product.sku
                 ws.cell(row=row_number, column=5).value = movement.product.name
@@ -4631,13 +4205,12 @@ def print_daily_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Total Quantity Sold:</b> {context.get('total_quantity', 0)} | "
-            f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
-            f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
-            f"<b>Total Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
-            f"<b>Total Operation Income:</b> Rs.{context.get('total_operation_income', 0):.2f} | "
-            f"<b>Revenue - Op Cost:</b> Rs.{context.get('revenue_minus_operation_cost', 0):.2f} | "
-            f"<b>Net Profit:</b> Rs.{context.get('net_profit', 0):.2f}"
+            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
+            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f} | "
+            f"<b>Operation Cost:</b> Rs.{context['total_operation_cost']:.2f} | "
+            f"<b>Net Profit:</b> Rs.{context['net_profit']:.2f}"
         )
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
@@ -4713,15 +4286,12 @@ def print_daily_report_excel(request):
         ws['A1'] = f"DAILY REPORT - {selected_date.strftime('%d %B %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
 
-        # Summary cards: total quantity, revenue, cogs, operation cost, operation income, revenue - op cost, net profit
-        ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
-        ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
-        # prefer 'total_cogs' but fall back to 'total_cost' for compatibility
-        ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
-        ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
-        ws['A7'] = f"Total Operation Income: Rs.{context.get('total_operation_income', 0):.2f}"
-        ws['A8'] = f"Revenue - Op Cost: Rs.{context.get('revenue_minus_operation_cost', 0):.2f}"
-        ws['A9'] = f"Net Profit: Rs.{context.get('net_profit', 0):.2f}"
+        ws['A3'] = f"Transactions: {context['total_transactions']}"
+        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+        ws['A7'] = f"Operation Cost: {context['total_operation_cost']:.2f}"
+        ws['A8'] = f"Net Profit: {context['net_profit']:.2f}"
 
         headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit']
         for col, header in enumerate(headers, 1):
@@ -4832,12 +4402,10 @@ def print_weekly_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Total Quantity Sold:</b> {context.get('total_quantity', 0)} | "
-            f"<b>Total Revenue:</b> Rs.{context.get('total_revenue', 0):.2f} | "
-            f"<b>Total COGS:</b> Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f} | "
-            f"<b>Total Operation Cost:</b> Rs.{context.get('total_operation_cost', 0):.2f} | "
-            f"<b>Total Operation Income:</b> Rs.{context.get('total_operation_income', 0):.2f} | "
-            f"<b>Total Net Profit:</b> Rs.{context.get('total_net_profit', 0):.2f}"
+            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
+            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
         )
         if selected_salesperson is not None:
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
@@ -4846,19 +4414,16 @@ def print_weekly_report_pdf(request):
         elements.append(Spacer(1, 0.2 * inch))
 
         elements.append(Paragraph('<b>Daily Breakdown</b>', styles['Heading3']))
-        # Daily breakdown: Date, Quantity Sold, Revenue, COGS, Operation Cost, Net Profit
-        daily_data = [['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Operation Cost', 'Net Profit']]
+        daily_data = [['Date', 'Transactions', 'Quantity Sold', 'Revenue']]
         for day, row in context['daily_data'].items():
             daily_data.append([
                 day,
-                f"{Decimal(row.get('quantity', 0)):.0f}",
-                f"Rs.{row.get('revenue', Decimal('0.0')):.2f}",
-                f"Rs.{row.get('cogs', Decimal('0.0')):.2f}",
-                f"Rs.{row.get('operation_cost', Decimal('0.0')):.2f}",
-                f"Rs.{row.get('net_profit', Decimal('0.0')):.2f}",
+                str(row['count']),
+                f"{Decimal(row['quantity']):.0f}",
+                f"Rs.{row['revenue']:.2f}",
             ])
 
-        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.1 * inch, 1.1 * inch, 1.2 * inch, 1.2 * inch])
+        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.2 * inch, 1.3 * inch])
         daily_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -4945,20 +4510,16 @@ def print_weekly_report_excel(request):
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
             ws['A2'] = f"Salesperson: {salesperson_name}"
 
-        # Summary cards: total quantity, revenue, cogs, operation cost, operation income, net profit
-        ws['A3'] = f"Total Quantity Sold: {context.get('total_quantity', 0)}"
-        ws['A4'] = f"Total Revenue: Rs.{context.get('total_revenue', 0):.2f}"
-        ws['A5'] = f"Total COGS: Rs.{context.get('total_cogs', context.get('total_cost', 0)):.2f}"
-        ws['A6'] = f"Total Operation Cost: Rs.{context.get('total_operation_cost', 0):.2f}"
-        ws['A7'] = f"Total Operation Income: Rs.{context.get('total_operation_income', 0):.2f}"
-        ws['A8'] = f"Total Net Profit: Rs.{context.get('total_net_profit', 0):.2f}"
+        ws['A3'] = f"Transactions: {context['total_transactions']}"
+        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
 
-        ws['A9'] = 'Daily Breakdown'
-        ws['A9'].font = Font(bold=True)
+        ws['A8'] = 'Daily Breakdown'
+        ws['A8'].font = Font(bold=True)
 
-        # Daily breakdown: Date, Quantity Sold, Revenue, COGS, Operation Cost, Net Profit
-        daily_headers = ['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Operation Cost', 'Net Profit']
-        daily_header_row = 10
+        daily_headers = ['Date', 'Transactions', 'Quantity Sold', 'Revenue']
+        daily_header_row = 9
         for col, header in enumerate(daily_headers, 1):
             cell = ws.cell(row=daily_header_row, column=col)
             cell.value = header
@@ -4969,16 +4530,9 @@ def print_weekly_report_excel(request):
         row = daily_header_row + 1
         for day, data in context['daily_data'].items():
             ws.cell(row=row, column=1).value = day
-            ws.cell(row=row, column=2).value = float(data.get('quantity', 0))
-            ws.cell(row=row, column=3).value = float(data.get('revenue', 0))
-            ws.cell(row=row, column=4).value = float(data.get('cogs', 0))
-            ws.cell(row=row, column=5).value = float(data.get('operation_cost', 0))
-            ws.cell(row=row, column=6).value = float(data.get('net_profit', 0))
-            # apply number formats for currency columns
-            ws.cell(row=row, column=3).number_format = '₹#,##0.00'
-            ws.cell(row=row, column=4).number_format = '₹#,##0.00'
-            ws.cell(row=row, column=5).number_format = '₹#,##0.00'
-            ws.cell(row=row, column=6).number_format = '₹#,##0.00'
+            ws.cell(row=row, column=2).value = int(data['count'])
+            ws.cell(row=row, column=3).value = int(data['quantity'])
+            ws.cell(row=row, column=4).value = float(data['revenue'])
             row += 1
 
         row += 1
@@ -5430,6 +4984,7 @@ def print_income_statement_excel(request):
 # ==================== USER MANAGEMENT ====================
 
 @login_required
+@permission_required('auth.change_user', raise_exception=True)
 def user_list(request):
     """List all users"""
     users = User.objects.all()
@@ -5437,6 +4992,7 @@ def user_list(request):
     return render(request, 'inventory/user_list.html', context)
 
 @login_required
+@permission_required('auth.add_user', raise_exception=True)
 def add_user(request):
     """Add new user"""
     if request.method == 'POST':
@@ -5452,6 +5008,7 @@ def add_user(request):
     return render(request, 'inventory/user_form.html', context)
 
 @login_required
+@permission_required('auth.change_user', raise_exception=True)
 def edit_user(request, user_id):
     """Edit user"""
     user = get_object_or_404(User, pk=user_id)
@@ -5469,6 +5026,7 @@ def edit_user(request, user_id):
     return render(request, 'inventory/user_form.html', context)
 
 @login_required
+@permission_required('auth.delete_user', raise_exception=True)
 def delete_user(request, user_id):
     """Delete user"""
     user = get_object_or_404(User, pk=user_id)

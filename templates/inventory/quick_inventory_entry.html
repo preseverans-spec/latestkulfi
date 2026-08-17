@@ -70,8 +70,8 @@
             <label for="manufacturer_filter" class="form-label">Manufacturer</label>
             <select id="manufacturer_filter" class="form-select">
                 <option value="" {% if not selected_manufacturer %}selected{% endif %}>Select Manufacturer</option>
-                {% for manufacturer in manufacturer_options %}
-                <option value="{{ manufacturer }}" {% if selected_manufacturer == manufacturer %}selected{% endif %}>{{ manufacturer }}</option>
+                {% for manufacturer in manufacturers %}
+                <option value="{{ manufacturer.name }}" {% if selected_manufacturer == manufacturer.name %}selected{% endif %}>{{ manufacturer.name }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -106,24 +106,16 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for group in product_groups %}
-                        <tr data-total-stock="{{ group.total_stock|default:'0' }}">
+                        {% if selected_manufacturer and manufacturer_products %}
+                        {% for product in manufacturer_products %}
+                        <tr data-product-id="{{ product.id }}" data-cost="{{ product.cost_price }}" data-stock="{{ product.current_stock }}">
                             <td>
-                                {{ group.name }}
-                                <input type="hidden" name="product[]" class="product-id-input" value="">
-                                {% for m_row in group.manufacturer_rows %}
-                                <input type="hidden" class="manufacturer-map"
-                                    data-manufacturer="{{ m_row.manufacturer }}"
-                                    data-product-id="{{ m_row.product.id|default:'' }}"
-                                    data-cost="{% if m_row.cost_override %}{{ m_row.cost_override }}{% elif m_row.product %}{{ m_row.product.cost_price }}{% else %}0{% endif %}"
-                                    data-stock="{{ m_row.stock|default:'0' }}">
-                                {% endfor %}
+                                {{ product.name }}
+                                <input type="hidden" name="product[]" class="product-id-input" value="{{ product.id }}">
+                                <input type="hidden" name="cost_price[]" class="cost-price-input" value="{{ product.cost_price }}">
                             </td>
-                            <td class="stock-cell">{{ group.total_stock|default:'0' }}</td>
-                            <td>
-                                <span class="badge bg-secondary cost-price-display">₹0.00</span>
-                                <input type="hidden" name="cost_price[]" class="cost-price-input" value="0">
-                            </td>
+                            <td class="stock-cell">{{ product.current_stock }}</td>
+                            <td><span class="badge bg-secondary cost-price-display">₹{{ product.cost_price|floatformat:2 }}</span></td>
                             <td>
                                 <select name="movement_type[]" class="form-select movement-type-select" style="max-width: 150px;">
                                     <option value="IN">Stock In</option>
@@ -155,6 +147,11 @@
                             <input type="hidden" name="movement_date[]" class="movement-date-value" value="{{ selected_movement_date|date:'Y-m-d' }}">
                         </tr>
                         {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="text-muted">Select a manufacturer to load its products.</td>
+                        </tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
@@ -196,13 +193,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectedManufacturerInput = document.getElementById('selected_manufacturer');
     const cancelButton = document.getElementById('cancel-quick-inventory');
 
-    if (cancelButton) {
-        cancelButton.addEventListener('click', function() {
-            if (window.history.length > 1) {
-                window.history.back();
-            } else {
-                window.location.href = "{% url 'dashboard' %}";
-            }
+    function getVisibleRows() {
+        return Array.from(document.querySelectorAll('tbody tr')).filter(function(row) {
+            return row.querySelector('.quantity-input');
         });
     }
 
@@ -213,48 +206,20 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    movementDateInput.addEventListener('change', function() {
-        syncMovementDateToRows();
-        const dateValue = this.value;
-        const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
-        const params = new URLSearchParams(window.location.search);
-        if (dateValue) {
-            params.set('movement_date', dateValue);
-        } else {
-            params.delete('movement_date');
-        }
-        if (manufacturer) {
-            params.set('manufacturer', manufacturer);
-        } else {
-            params.delete('manufacturer');
-        }
-        window.location.search = params.toString();
-        refreshProductsBySelection();
-    });
-
     function updateSummary() {
         let totalPacks = 0;
         let totalEffectiveQty = 0;
         let totalValue = 0;
         let productCount = 0;
 
-        document.querySelectorAll('tbody tr').forEach(function(row) {
-            if (row.style.display === 'none') {
-                return;
-            }
-
+        getVisibleRows().forEach(function(row) {
             const quantity = parseInt(row.querySelector('.quantity-input').value, 10) || 0;
             const unit = row.querySelector('.quantity-unit').value;
             const effective = parseInt(row.querySelector('.effective-qty').textContent, 10) || 0;
             const rowValue = parseFloat(row.querySelector('.row-total').textContent.replace('₹', '')) || 0;
 
-            if (quantity > 0) {
-                productCount += 1;
-            }
-            if (unit === 'PACK') {
-                totalPacks += quantity;
-            }
-
+            if (quantity > 0) productCount += 1;
+            if (unit === 'PACK') totalPacks += quantity;
             totalEffectiveQty += effective;
             totalValue += rowValue;
         });
@@ -270,121 +235,63 @@ document.addEventListener('DOMContentLoaded', function() {
         const unitSelect = row.querySelector('.quantity-unit');
         const effectiveSpan = row.querySelector('.effective-qty');
         const rowTotalSpan = row.querySelector('.row-total');
-        const costPrice = parseFloat(row.querySelector('input[name="cost_price[]"]').value || 0);
+        const costPrice = parseFloat(row.dataset.cost || '0');
 
         let qty = parseInt(quantityInput.value, 10) || 0;
         if (qty < 0) qty = 0;
 
-        const unit = unitSelect.value;
-        const effective = unit === 'PACK' ? qty * 6 : qty;
-
+        const effective = unitSelect.value === 'PACK' ? qty * 6 : qty;
         effectiveSpan.textContent = effective;
-        const rowTotal = effective * costPrice;
-        rowTotalSpan.textContent = '₹' + rowTotal.toFixed(2);
-
-        return effective;
-    }
-
-    function applyUnitToAllRows(unitValue) {
-        document.querySelectorAll('.quantity-unit').forEach(function(select) {
-            if (!select.disabled) {
-                select.value = unitValue;
-            }
-        });
-
-        document.querySelectorAll('tbody tr').forEach(function(row) {
-            if (row.style.display !== 'none') {
-                updateEffectiveQty(row);
-            }
-        });
-        updateSummary();
+        rowTotalSpan.textContent = '₹' + (effective * costPrice).toFixed(2);
     }
 
     function applyMovementTypeToAllRows(movementType) {
         document.querySelectorAll('.movement-type-select').forEach(function(select) {
-            if (!select.disabled) {
-                select.value = movementType;
-            }
+            select.value = movementType;
         });
-
         document.querySelectorAll('.adjustment-col').forEach(function(cell) {
             cell.style.display = movementType === 'ADJUSTMENT' ? 'table-cell' : 'none';
         });
-
-        document.querySelectorAll('tbody tr').forEach(function(row) {
-            if (row.style.display === 'none') return;
-            const adjustmentSelect = row.querySelector('.adjustment-mode-select');
-            if (!adjustmentSelect) return;
-            adjustmentSelect.style.display = movementType === 'ADJUSTMENT' ? 'block' : 'none';
+        document.querySelectorAll('.adjustment-mode-select').forEach(function(select) {
+            select.style.display = movementType === 'ADJUSTMENT' ? 'block' : 'none';
         });
     }
 
-    function switchManufacturer(manufacturer) {
-        if (!manufacturer) {
-            document.querySelectorAll('tbody tr').forEach(function(row) {
-                row.style.display = 'none';
-                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = true; });
-                const qtyInput = row.querySelector('.quantity-input');
-                const effSpan = row.querySelector('.effective-qty');
-                const totalSpan = row.querySelector('.row-total');
-                if (qtyInput) qtyInput.value = '';
-                if (effSpan) effSpan.textContent = '0';
-                if (totalSpan) totalSpan.textContent = '₹0.00';
-            });
-            updateSummary();
-            return;
-        }
-
-        document.querySelectorAll('tbody tr').forEach(function(row) {
-            const totalStock = row.getAttribute('data-total-stock') || '0';
-
-            let activeId = '';
-            let activeCost = '0';
-            row.querySelectorAll('.manufacturer-map').forEach(function(mapInput) {
-                if ((mapInput.getAttribute('data-manufacturer') || '') === manufacturer) {
-                    activeId = mapInput.getAttribute('data-product-id') || '';
-                    activeCost = mapInput.getAttribute('data-cost') || '0';
-                }
-            });
-
-            const productInput = row.querySelector('.product-id-input');
-            const costBadge = row.querySelector('.cost-price-display');
-            const costInput = row.querySelector('.cost-price-input');
-            const stockCell = row.querySelector('.stock-cell');
-
-            if (productInput) productInput.value = activeId;
-            if (costBadge) costBadge.textContent = '₹' + parseFloat(activeCost).toFixed(2);
-            if (costInput) costInput.value = activeCost;
-            if (stockCell) stockCell.textContent = totalStock;
-
-            if (!activeId) {
-                row.style.display = 'none';
-                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = true; });
-                const qtyInput = row.querySelector('.quantity-input');
-                const effSpan = row.querySelector('.effective-qty');
-                const totalSpan = row.querySelector('.row-total');
-                if (qtyInput) qtyInput.value = '';
-                if (effSpan) effSpan.textContent = '0';
-                if (totalSpan) totalSpan.textContent = '₹0.00';
-            } else {
-                row.style.display = '';
-                row.querySelectorAll('input, select').forEach(function(f) { f.disabled = false; });
-            }
-
-            updateEffectiveQty(row);
-        });
-
-        updateSummary();
-    }
-
-    function refreshProductsBySelection() {
+    function reloadForSelection() {
+        const params = new URLSearchParams(window.location.search);
         const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
         const movementDate = movementDateInput ? movementDateInput.value : '';
-        if (!manufacturer || !movementDate) {
-            switchManufacturer('');
-            return;
+
+        if (movementDate) {
+            params.set('movement_date', movementDate);
+        } else {
+            params.delete('movement_date');
         }
-        switchManufacturer(manufacturer);
+
+        if (manufacturer) {
+            params.set('manufacturer', manufacturer);
+        } else {
+            params.delete('manufacturer');
+        }
+
+        window.location.search = params.toString();
+    }
+
+    if (cancelButton) {
+        cancelButton.addEventListener('click', function() {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = "{% url 'dashboard' %}";
+            }
+        });
+    }
+
+    if (movementDateInput) {
+        movementDateInput.addEventListener('change', function() {
+            syncMovementDateToRows();
+            reloadForSelection();
+        });
     }
 
     document.querySelectorAll('tbody tr').forEach(function(row) {
@@ -393,16 +300,21 @@ document.addEventListener('DOMContentLoaded', function() {
         const movementTypeSelect = row.querySelector('.movement-type-select');
         const adjustmentModeSelect = row.querySelector('.adjustment-mode-select');
 
-        function fireUpdate() {
-            if (quantityInput.value < 0) quantityInput.value = 0;
-            updateEffectiveQty(row);
-            updateSummary();
+        if (!quantityInput || !unitSelect || !movementTypeSelect) {
+            return;
         }
 
-        quantityInput.addEventListener('input', fireUpdate);
-        unitSelect.addEventListener('change', function() {
-            applyUnitToAllRows(unitSelect.value);
+        quantityInput.addEventListener('input', function() {
+            if (parseInt(quantityInput.value, 10) < 0) quantityInput.value = 0;
+            updateEffectiveQty(row);
+            updateSummary();
         });
+
+        unitSelect.addEventListener('change', function() {
+            updateEffectiveQty(row);
+            updateSummary();
+        });
+
         movementTypeSelect.addEventListener('change', function() {
             applyMovementTypeToAllRows(movementTypeSelect.value);
         });
@@ -415,10 +327,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        fireUpdate();
+        updateEffectiveQty(row);
     });
 
-    // Keep Adjustment Mode hidden on initial load unless movement type is set to ADJUSTMENT.
     const initialMovementType = document.querySelector('.movement-type-select')?.value || 'IN';
     applyMovementTypeToAllRows(initialMovementType);
 
@@ -427,23 +338,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedManufacturerInput) {
                 selectedManufacturerInput.value = this.value || '';
             }
-            const movementDate = movementDateInput ? movementDateInput.value : '';
-            if (movementDate) {
-                const params = new URLSearchParams(window.location.search);
-                params.set('movement_date', movementDate);
-                if (this.value) {
-                    params.set('manufacturer', this.value);
-                } else {
-                    params.delete('manufacturer');
-                }
-                window.location.search = params.toString();
-                return;
-            }
-            refreshProductsBySelection();
-            const visibleMovementType = document.querySelector('tbody tr:not([style*="display: none"]) .movement-type-select');
-            if (visibleMovementType) {
-                applyMovementTypeToAllRows(visibleMovementType.value);
-            }
+            reloadForSelection();
         });
     }
 
@@ -465,9 +360,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    refreshProductsBySelection();
-
-    // initial summary update
     updateSummary();
 });
 </script>

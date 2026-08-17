@@ -257,7 +257,7 @@ Shows week-range performance with aggregates and export options.
 Shows profitability analysis by date range and product insights.
 
 ## Stock Report
-Tracks stock-in entries for Indian Kulfi and Kulfi Corner.
+Tracks stock-in entries for Indian Kulfi and New Bowring.
 
 Modes:
 - General report
@@ -267,7 +267,7 @@ Summary includes:
 - Total entries
 - Total quantity in
 - Indian Kulfi quantity
-- Kulfi Corner quantity
+- New Bowring quantity
 - Total purchase cost
 
 Exports:

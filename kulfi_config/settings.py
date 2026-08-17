@@ -117,6 +117,7 @@ if DATABASE_URL:
         db_ssl_require = db_host not in local_db_hosts
     else:
         db_ssl_require = _as_bool(db_ssl_require_env)
+
     DATABASES = {
         'default': dj_database_url.config(
             default=DATABASE_URL,

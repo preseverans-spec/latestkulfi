@@ -2,6 +2,49 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 
+
+class Manufacturer(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=50, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Manufacturer'
+        verbose_name_plural = 'Manufacturers'
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            self.code = self.name.strip().upper().replace(' ', '_')[:50]
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def ensure_defaults(cls):
+        rename_map = (
+            ('Indian Kulfi', 'Bowring', 'BOWRING'),
+        )
+        for old_name, new_name, code in rename_map:
+            if cls.objects.filter(name=old_name).exists() and not cls.objects.filter(name=new_name).exists():
+                cls.objects.filter(name=old_name).update(name=new_name, code=code)
+
+        # Legacy rows may still have old names/codes ending with "corner".
+        cls.objects.filter(name__iendswith='corner').exclude(name='New Bowring').update(name='New Bowring', code='NEW_BOWRING')
+        cls.objects.filter(code__iendswith='_CORNER').exclude(name='New Bowring').update(name='New Bowring', code='NEW_BOWRING')
+
+        defaults = (
+            ('Bowring', 'BOWRING'),
+            ('New Bowring', 'NEW_BOWRING'),
+        )
+        for name, code in defaults:
+            cls.objects.get_or_create(name=name, defaults={'code': code, 'description': ''})
+        return cls.objects.filter(is_active=True).order_by('name')
+
 class StockOrder(models.Model):
     manufacturer = models.CharField(max_length=100)
     location = models.CharField(max_length=100, blank=True, default='')

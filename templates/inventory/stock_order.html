@@ -133,23 +133,15 @@
             <label class="form-label mb-1" for="manufacturerSelect">Manufacturer</label>
             <select id="manufacturerSelect" class="form-select" style="min-width:200px;">
                 <option value="">-- Select Manufacturer --</option>
-                {% for manufacturer in manufacturer_options %}
-                <option value="{{ manufacturer }}">{{ manufacturer }}</option>
+                {% for manufacturer in manufacturers %}
+                <option value="{{ manufacturer.name }}">{{ manufacturer.name }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div class="col-auto">
-            <label class="form-label mb-1" for="location">Location</label>
-            <input type="text" id="location" class="form-control" placeholder="Enter location" style="min-width:200px;">
-        </div>
-    </div>
-    <div class="mt-2 text-muted" style="font-size:0.9rem;">
-        Lot rule: Pot = 12 Nos per lot. All other flavors = 6 Nos per lot.
     </div>
 </div>
 
 <!-- Action Bar -->
-<div id="stockOrderResponseMsg" class="alert py-2 mb-3 no-print" style="display:none;"></div>
 <div class="action-bar no-print" id="actionBar" style="display:none!important;">
     <!-- Print dropdown -->
     <div class="btn-group">
@@ -157,10 +149,6 @@
             <i class="fas fa-print"></i> Print / Export
         </button>
         <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="#" onclick="saveAndPrintOrder(); return false;">
-                <i class="fas fa-print"></i> Print
-            </a></li>
-            <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item" href="#" onclick="exportPDF(); return false;">
                 <i class="fas fa-file-pdf"></i> Download PDF
             </a></li>
@@ -169,33 +157,30 @@
             <script>
             function exportPDF() {
                 const d = getOrderData();
-                const printableRows = getPrintableRows(d.rows);
                 // Build an off-screen div with the clean table
                 const container = document.createElement('div');
                 container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
 
                 let rows = '';
-                printableRows.forEach(function(r, index) {
+                d.rows.forEach(function(r) {
                     rows += '<tr>' +
-                    '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (index + 1) + '</td>' +
+                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
                         '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
                         '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
                         '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
                         '</tr>';
                 });
 
-                const locationLine = d.location ? '<div style="font-size:10pt;color:#555;margin-top:4px;">Location: ' + d.location + '</div>' : '';
                 container.innerHTML =
                     '<div style="text-align:center;margin-bottom:10px;">'
                     + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
                     + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
-                    + locationLine
                     + '</div>'
                     + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
                     + '<thead><tr>'
                     + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">S.No.</th>'
                     + '<th style="border:1px solid #333;padding:5px 12px;background:#e0e0e0;font-weight:700;">Kulfi Name</th>'
-                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.printLotLabel + '</th>'
+                    + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.lotLabel + '</th>'
                     + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">Quantity</th>'
                     + '</tr></thead>'
                     + '<tbody>' + rows + '</tbody>'
@@ -223,29 +208,21 @@
             }
             </script>
             <script>
-            function showStockOrderResponse(message, level) {
-                const el = document.getElementById('stockOrderResponseMsg');
-                if (!el) return;
-                el.className = 'alert py-2 mb-3 no-print';
-                el.classList.add(level === 'error' ? 'alert-danger' : 'alert-success');
-                el.textContent = message;
-                el.style.display = 'block';
-            }
-
-            function saveOrderOnly() {
-                persistCurrentOrder().then(function(data) {
-                    const orderId = data && data.order ? data.order.id : '';
-                    showStockOrderResponse('Stock order saved to history' + (orderId ? ' (ID: ' + orderId + ')' : '') + '.', 'success');
-                }).catch(function(err) {
-                    showStockOrderResponse(err && err.message ? err.message : 'Unable to save stock order.', 'error');
-                });
-            }
-
             function saveAndPrintOrder() {
-                persistCurrentOrder().then(function() {
+                const d = getOrderData();
+                fetch("{% url 'save_stock_order' %}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({
+                        manufacturer: d.mfgLabel,
+                        order_date: d.date,
+                        items: d.rows
+                    })
+                }).then(resp => resp.json()).then(data => {
                     openPrintWindow();
-                }).catch(function(err) {
-                    alert(err && err.message ? err.message : 'Unable to save stock order before printing.');
                 });
             }
 
@@ -275,9 +252,6 @@
     <button class="btn btn-outline-warning btn-icon" onclick="clearInputs()" title="Clear entries">
         <i class="fas fa-eraser"></i> Clear
     </button>
-    <button class="btn btn-outline-success btn-icon" onclick="saveOrderOnly()" title="Save order to history">
-        <i class="fas fa-save"></i> Save
-    </button>
     <button class="btn btn-outline-secondary btn-icon" onclick="resetForm()" title="Reset form">
         <i class="fas fa-undo"></i> Reset
     </button>
@@ -291,25 +265,25 @@
         Please select a manufacturer above to view the order form.
     </div>
 
-    <table class="order-table" id="manufacturerOrderTable" style="display:none;">
+    <table class="order-table" id="stockOrderTable" style="display:none;">
         <thead>
             <tr>
                 <th style="width:45px;">S.No.</th>
-                <th>Kulfi Name</th>
+                <th>Product</th>
                 <th class="cost-col">Cost/Piece</th>
-                <th style="width:90px;">Lot<br><small>(Pot=12, Others=6)</small></th>
+                <th id="quantityLabelHeader" style="width:90px;">Lot</th>
                 <th style="width:90px;">Quantity</th>
                 <th class="row-total-col total-col">Total</th>
             </tr>
         </thead>
-        <tbody id="manufacturerOrderBody"></tbody>
+        <tbody id="stockOrderBody"></tbody>
         <tfoot>
             <tr>
                 <td colspan="2" style="font-weight:700;">Total</td>
                 <td class="cost-col"></td>
-                <td id="orderTotalLot" style="font-weight:700;">0</td>
-                <td id="orderTotalQty" style="font-weight:700;">0</td>
-                <td class="row-total-col" id="orderTotalAmt" style="font-weight:700;">₹0.00</td>
+                <td id="quantityLabelTotal" style="font-weight:700;">0</td>
+                <td id="totalQty" style="font-weight:700;">0</td>
+                <td class="row-total-col" id="totalAmt" style="font-weight:700;">₹0.00</td>
             </tr>
         </tfoot>
     </table>
@@ -321,193 +295,24 @@
         <h5 class="mb-0"><i class="fas fa-history"></i> Stock Order History</h5>
     </div>
     <div class="card-body">
-        <div id="historyEditHint" class="alert alert-info py-2 mb-3" style="display:none;"></div>
-        <div id="stockOrderHistoryBody" class="text-muted">Loading order history...</div>
+        <!-- Placeholder for previous order details. Replace with dynamic content as needed. -->
+        <p class="text-muted">Previous stock order details will appear here.</p>
     </div>
 </div>
 
 <script>
-    let stockOrderCatalog = {};
-    try {
-        stockOrderCatalog = JSON.parse('{{ stock_order_catalog_json|escapejs }}');
-    } catch (err) {
-        console.error('Unable to parse stock order catalog JSON.', err);
-        stockOrderCatalog = {};
-    }
-    const saveStockOrderUrl = "{% url 'save_stock_order' %}";
-    const stockOrderHistoryUrl = "{% url 'stock_order_history' %}";
-    const deleteStockOrderUrlTemplate = "{% url 'delete_stock_order' 0 %}";
-    let editingOrderId = null;
-    let cachedStockOrders = [];
+    const manufacturerProducts = {{ manufacturer_products_json|safe }};
 
-    function escapeHtml(value) {
-        return String(value || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    function getProducts(manufacturerName) {
+        return manufacturerProducts[manufacturerName] || [];
     }
 
-    function getDeleteStockOrderUrl(orderId) {
-        return deleteStockOrderUrlTemplate.replace('/0/', '/' + orderId + '/');
+    function quantityLabelForManufacturer(manufacturerName) {
+        return manufacturerName === 'Bowring' ? 'Lot' : 'Pack';
     }
 
-    function parseJsonResponse(resp, defaultMessage) {
-        return resp.text().then(function(text) {
-            let data = null;
-            try {
-                data = text ? JSON.parse(text) : {};
-            } catch (err) {
-                const preview = (text || '').slice(0, 200);
-                throw new Error(defaultMessage + ' HTTP ' + resp.status + '. ' + (preview || 'Received non-JSON response.'));
-            }
-            if (!resp.ok) {
-                const msg = data && data.message ? data.message : (defaultMessage + ' HTTP ' + resp.status + '.');
-                throw new Error(msg);
-            }
-            return data;
-        });
-    }
-
-    function updateHistoryEditHint() {
-        const hintEl = document.getElementById('historyEditHint');
-        if (!hintEl) return;
-        if (!editingOrderId) {
-            hintEl.style.display = 'none';
-            hintEl.textContent = '';
-            return;
-        }
-        hintEl.style.display = 'block';
-        hintEl.textContent = 'Editing order #' + editingOrderId + '. Click Print to update and print, or Reset to start a new order.';
-    }
-
-    function renderStockOrderHistory() {
-        const container = document.getElementById('stockOrderHistoryBody');
-        if (!container) return;
-
-        if (!cachedStockOrders.length) {
-            container.innerHTML = '<p class="text-muted mb-0">No stock orders saved yet.</p>';
-            return;
-        }
-
-        const rows = cachedStockOrders.map(function(order) {
-            const itemPreview = (order.items || []).map(function(item) {
-                return escapeHtml(item.name) + ' (' + item.lot + ')';
-            }).join(', ');
-            return '<tr>'
-                + '<td>' + order.id + '</td>'
-                + '<td>' + escapeHtml(order.order_date) + '</td>'
-                + '<td>' + escapeHtml(order.manufacturer) + '</td>'
-                + '<td>' + (order.total_lot || 0) + '</td>'
-                + '<td>' + (order.total_qty || 0) + '</td>'
-                + '<td style="max-width:360px;white-space:normal;">' + itemPreview + '</td>'
-                + '<td class="text-nowrap">'
-                + '<button class="btn btn-sm btn-outline-primary me-1" onclick="editStockOrder(' + order.id + ')">Edit</button>'
-                + '<button class="btn btn-sm btn-outline-danger" onclick="removeStockOrder(' + order.id + ')">Delete</button>'
-                + '</td>'
-                + '</tr>';
-        }).join('');
-
-        container.innerHTML = '<div class="table-responsive">'
-            + '<table class="table table-sm table-bordered align-middle mb-0">'
-            + '<thead class="table-light">'
-            + '<tr><th>ID</th><th>Date</th><th>Manufacturer</th><th>Total Lot</th><th>Total Qty</th><th>Flavors</th><th>Actions</th></tr>'
-            + '</thead><tbody>' + rows + '</tbody></table></div>';
-    }
-
-    function loadStockOrderHistory() {
-        fetch(stockOrderHistoryUrl, {
-            method: 'GET',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' }
-        }).then(function(resp) {
-            return parseJsonResponse(resp, 'Failed to load stock order history.');
-        }).then(function(data) {
-            if (!data || data.status !== 'success') {
-                throw new Error(data && data.message ? data.message : 'Failed to load stock order history.');
-            }
-            cachedStockOrders = data.orders || [];
-            renderStockOrderHistory();
-        }).catch(function(err) {
-            const container = document.getElementById('stockOrderHistoryBody');
-            if (container) {
-                container.innerHTML = '<p class="text-danger mb-0">' + escapeHtml(err && err.message ? err.message : 'Unable to load order history.') + '</p>';
-            }
-        });
-    }
-
-    function editStockOrder(orderId) {
-        const order = (cachedStockOrders || []).find(function(item) { return item.id === orderId; });
-        if (!order) {
-            alert('Order not found in history. Please refresh and try again.');
-            return;
-        }
-
-        const manufacturerSelect = document.getElementById('manufacturerSelect');
-        const orderDateInput = document.getElementById('orderDate');
-        const locationInput = document.getElementById('location');
-        manufacturerSelect.value = order.manufacturer || '';
-        showManufacturer(order.manufacturer || '');
-        orderDateInput.value = order.order_date || '{{ today }}';
-        locationInput.value = order.location || '';
-
-        const lotByName = {};
-        (order.items || []).forEach(function(item) {
-            lotByName[(item.name || '').trim().toLowerCase()] = parseInt(item.lot, 10) || 0;
-        });
-
-        getSelectedProducts().forEach(function(product, index) {
-            const input = document.getElementById('order_lot_' + index);
-            if (!input) return;
-            const key = (product.name || '').trim().toLowerCase();
-            const lot = lotByName[key] || 0;
-            input.value = lot > 0 ? String(lot) : '';
-            recalcRow(input);
-        });
-        recalcFooter();
-
-        editingOrderId = order.id;
-        updateHistoryEditHint();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-
-    function removeStockOrder(orderId) {
-        if (!confirm('Delete stock order #' + orderId + '?')) {
-            return;
-        }
-        fetch(getDeleteStockOrderUrl(orderId), {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken'),
-            },
-        }).then(function(resp) {
-            return parseJsonResponse(resp, 'Unable to delete stock order.');
-        }).then(function(data) {
-            if (!data || data.status !== 'success') {
-                throw new Error(data && data.message ? data.message : 'Unable to delete stock order.');
-            }
-            if (editingOrderId === orderId) {
-                editingOrderId = null;
-                updateHistoryEditHint();
-            }
-            loadStockOrderHistory();
-        }).catch(function(err) {
-            alert(err && err.message ? err.message : 'Unable to delete stock order.');
-        });
-    }
-
-    function getSelectedManufacturer() {
-        return document.getElementById('manufacturerSelect').value;
-    }
-
-    function getSelectedProducts() {
-        const manufacturer = getSelectedManufacturer();
-        return stockOrderCatalog[manufacturer] || [];
-    }
-
-    function buildTableBody(products) {
-        const tbody = document.getElementById('manufacturerOrderBody');
+    function buildTableBody(products, quantityLabel) {
+        const tbody = document.getElementById('stockOrderBody');
         tbody.innerHTML = '';
         products.forEach(function(p, i) {
             const sno = i + 1;
@@ -515,14 +320,14 @@
             row.innerHTML =
                 '<td>' + sno + '</td>' +
                 '<td class="name-col">' + p.name + '</td>' +
-                '<td class="cost-col">₹' + Number(p.cost || 0).toFixed(2) + '</td>' +
+                '<td class="cost-col">₹' + p.cost.toFixed(2) + '</td>' +
                 '<td>' +
-                  '<input type="number" min="0" step="1" id="order_lot_' + i + '" ' +
-                                    'data-index="' + i + '" data-cost="' + Number(p.cost || 0) + '" data-units-per-lot="' + Number(p.units_per_lot || 6) + '" ' +
+                  '<input type="number" min="0" step="1" id="lot_' + i + '" ' +
+                  'data-index="' + i + '" data-cost="' + p.cost + '" ' +
                   'class="lot-input" placeholder="0" value="">' +
                 '</td>' +
-                '<td id="order_qty_' + i + '"></td>' +
-                '<td class="row-total-col" id="order_total_' + i + '"></td>';
+                '<td id="qty_' + i + '"></td>' +
+                '<td class="row-total-col" id="total_' + i + '"></td>';
             tbody.appendChild(row);
         });
 
@@ -537,54 +342,52 @@
                 recalcFooter();
             });
         });
+
+        document.getElementById('quantityLabelHeader').textContent = quantityLabel;
+        document.getElementById('quantityLabelTotal').textContent = '0';
     }
 
     function recalcRow(input) {
         const i = input.dataset.index;
         const cost = parseFloat(input.dataset.cost);
-        const unitsPerLot = parseInt(input.dataset.unitsPerLot, 10) || 6;
         const raw = input.value.trim();
         const lotVal = raw === '' ? 0 : (parseInt(raw) || 0);
-        const qty = lotVal * unitsPerLot;
+        const qty = lotVal * 6;
         const total = qty * cost;
-        const qtyEl = document.getElementById('order_qty_' + i);
-        const totEl = document.getElementById('order_total_' + i);
+        const qtyEl = document.getElementById('qty_' + i);
+        const totEl = document.getElementById('total_' + i);
         qtyEl.textContent  = (raw === '' || lotVal === 0) ? '' : qty;
         totEl.textContent  = (raw === '' || lotVal === 0) ? '' : '₹' + total.toFixed(2);
     }
 
     function recalcFooter() {
-        const inputs = document.querySelectorAll('.lot-input');
+        const inputs = document.querySelectorAll('#stockOrderBody .lot-input');
         let totalLot = 0, totalQty = 0, totalAmt = 0;
         inputs.forEach(function(input) {
             const cost = parseFloat(input.dataset.cost);
-            const unitsPerLot = parseInt(input.dataset.unitsPerLot, 10) || 6;
             const lotVal = parseInt(input.value) || 0;
-            const qty = lotVal * unitsPerLot;
+            const qty = lotVal * 6;
             totalLot += lotVal;
             totalQty += qty;
             totalAmt += qty * cost;
         });
 
-        document.getElementById('orderTotalLot').textContent = totalLot;
-        document.getElementById('orderTotalQty').textContent = totalQty;
-        document.getElementById('orderTotalAmt').textContent = '₹' + totalAmt.toFixed(2);
+        document.getElementById('quantityLabelTotal').textContent = totalLot;
+        document.getElementById('totalQty').textContent = totalQty;
+        document.getElementById('totalAmt').textContent = '₹' + totalAmt.toFixed(2);
     }
 
     function showManufacturer(val) {
-        const orderTable = document.getElementById('manufacturerOrderTable');
         const noMsg  = document.getElementById('noManufacturerMsg');
+        const orderTable = document.getElementById('stockOrderTable');
         const actionBar = document.getElementById('actionBar');
-        const responseMsg = document.getElementById('stockOrderResponseMsg');
-        if (responseMsg) {
-            responseMsg.style.display = 'none';
-        }
+        const products = getProducts(val);
 
-        if (val && stockOrderCatalog[val]) {
+        if (val && products.length) {
             noMsg.style.display = 'none';
             orderTable.style.display = 'table';
             actionBar.style.cssText = 'display:flex!important;';
-            buildTableBody(getSelectedProducts());
+            buildTableBody(products, quantityLabelForManufacturer(val));
             recalcFooter();
         } else {
             noMsg.style.display = 'block';
@@ -598,7 +401,7 @@
     });
 
     function clearInputs() {
-        const inputs = document.querySelectorAll('.lot-input');
+        const inputs = document.querySelectorAll('#stockOrderBody .lot-input');
         inputs.forEach(function(input) {
             input.value = '0';
             recalcRow(input);
@@ -609,118 +412,51 @@
     function resetForm() {
         document.getElementById('manufacturerSelect').value = '';
         document.getElementById('orderDate').value = '{{ today }}';
-        document.getElementById('location').value = '';
-        editingOrderId = null;
-        updateHistoryEditHint();
-        const responseMsg = document.getElementById('stockOrderResponseMsg');
-        if (responseMsg) {
-            responseMsg.style.display = 'none';
-        }
         showManufacturer('');
     }
 
     /* ── Collect current order rows as plain data ── */
     function getOrderData() {
-        const manufacturer = getSelectedManufacturer();
-        const location = document.getElementById('location').value || '';
-        const lotLabel = 'Lot (Pot=12, Others=6)';
-        const printLotLabel = 'Lot';
+        const manufacturer = document.getElementById('manufacturerSelect').value;
+        const lotLabel = quantityLabelForManufacturer(manufacturer);
         const mfgLabel = manufacturer;
         const date     = document.getElementById('orderDate').value;
-        const products = getSelectedProducts();
+        const products = getProducts(manufacturer);
 
         const rows = [];
         products.forEach(function(p, i) {
-            const input  = document.getElementById('order_lot_' + i);
+            const input  = document.getElementById('lot_' + i);
             const lotVal = parseInt(input ? input.value : '') || 0;
-            const unitsPerLot = parseInt(input && input.dataset ? input.dataset.unitsPerLot : (p.units_per_lot || 6), 10) || 6;
-            const qty    = lotVal * unitsPerLot;
-            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '', unitsPerLot: unitsPerLot });
+            const qty    = lotVal * 6;
+            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '' });
         });
 
         // Footer totals
-        const totalLotEl = document.getElementById('orderTotalLot');
-        const totalQtyEl = document.getElementById('orderTotalQty');
+        const totalLotEl = document.getElementById('quantityLabelTotal');
+        const totalQtyEl = document.getElementById('totalQty');
 
         return {
-            mfgLabel, location, lotLabel, printLotLabel, date, rows,
+            mfgLabel, lotLabel, date, rows,
             totalLot: totalLotEl ? totalLotEl.textContent : '0',
             totalQty: totalQtyEl ? totalQtyEl.textContent : '0',
         };
     }
 
-    function getPrintableRows(rows) {
-        return (rows || []).filter(function(r) {
-            const lot = parseInt(r && r.lot, 10) || 0;
-            const qty = parseInt(r && r.qty, 10) || 0;
-            return lot > 0 && qty > 0;
-        });
-    }
-
-    function persistCurrentOrder() {
-        const d = getOrderData();
-        const printableRows = getPrintableRows(d.rows);
-
-        if (!d.mfgLabel) {
-            return Promise.reject(new Error('Please select a manufacturer before printing.'));
-        }
-        if (!d.date) {
-            return Promise.reject(new Error('Please select an order date before printing.'));
-        }
-        if (!printableRows.length) {
-            return Promise.reject(new Error('Enter at least one flavor with lot greater than 0 before printing.'));
-        }
-
-        const payload = {
-            manufacturer: d.mfgLabel,
-            location: d.location,
-            order_date: d.date,
-            items: printableRows.map(function(row) {
-                return {
-                    name: row.name,
-                    lot: parseInt(row.lot, 10) || 0,
-                };
-            }),
-        };
-
-        if (editingOrderId) {
-            payload.order_id = editingOrderId;
-        }
-
-        return fetch(saveStockOrderUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken'),
-            },
-            body: JSON.stringify(payload),
-        }).then(function(resp) {
-            return parseJsonResponse(resp, 'Unable to save stock order.');
-        }).then(function(data) {
-            if (!data || data.status !== 'success') {
-                throw new Error(data && data.message ? data.message : 'Unable to save stock order.');
-            }
-            editingOrderId = data.order && data.order.id ? data.order.id : editingOrderId;
-            updateHistoryEditHint();
-            loadStockOrderHistory();
-            return data;
-        });
-    }
-
     /* ── Print / Save as PDF in a clean popup ── */
     function openPrintWindow() {
         const d = getOrderData();
-        const printableRows = getPrintableRows(d.rows);
         let rows = '';
-        printableRows.forEach(function(r, index) {
-            rows += '<tr>' +
-            '<td>' + (index + 1) + '</td>' +
-                '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
-                '<td>' + r.lot + '</td>' +
-                '<td>' + r.qty + '</td>' +
-                '</tr>';
+        d.rows.forEach(function(r) {
+            // Only include products with non-empty and non-zero quantity
+            if (r.qty !== '' && r.qty !== 0 && r.lot !== '' && r.lot !== 0) {
+                rows += '<tr>' +
+                    '<td>' + r.sno + '</td>' +
+                    '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
+                    '<td>' + r.lot + '</td>' +
+                    '<td>' + r.qty + '</td>' +
+                    '</tr>';
+            }
         });
-        const locationLine = d.location ? '<p>Location: ' + d.location + '</p>' : '';
         const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Stock Order</title>'
             + '<style>'
@@ -738,10 +474,9 @@
             + '<div class="hdr">'
             + '<h2>Stock Order</h2>'
             + '<p>Date: ' + d.date + '</p>'
-            + locationLine
             + '</div>'
             + '<table>'
-            + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.printLotLabel + '</th><th>Quantity</th></tr></thead>'
+            + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.lotLabel + '</th><th>Quantity</th></tr></thead>'
             + '<tbody>' + rows + '</tbody>'
             + '<tfoot><tr><td colspan="2">Total</td><td>' + d.totalLot + '</td><td>' + d.totalQty + '</td></tr></tfoot>'
             + '</table>'
@@ -774,40 +509,37 @@
         ws['!cols'] = colWidths;
 
         XLSX.utils.book_append_sheet(wb, ws, 'Stock Order');
-        XLSX.writeFile(wb, 'StockOrder_' + d.mfgLabel.replace(' ', '_') + '_' + d.date + '.xlsx');
+        XLSX.writeFile(wb, 'StockOrder_' + d.mfgLabel.replace(/\s+/g, '_') + '_' + d.date + '.xlsx');
     }
 
     /* ── Export Image (PNG) via html2canvas ── */
     function exportImage() {
         const d = getOrderData();
-        const printableRows = getPrintableRows(d.rows);
 
         // Build an off-screen div with the clean table
         const container = document.createElement('div');
         container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
 
         let rows = '';
-        printableRows.forEach(function(r, index) {
+        d.rows.forEach(function(r) {
             rows += '<tr>' +
-            '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (index + 1) + '</td>' +
+                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
                 '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
                 '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.lot !== '' ? r.lot : '') + '</td>' +
                 '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.qty !== '' ? r.qty : '') + '</td>' +
                 '</tr>';
         });
 
-        const locationLine = d.location ? '<div style="font-size:10pt;color:#555;margin-top:4px;">Location: ' + d.location + '</div>' : '';
         container.innerHTML =
             '<div style="text-align:center;margin-bottom:10px;">'
             + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
             + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
-            + locationLine
             + '</div>'
             + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
             + '<thead><tr>'
             + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">S.No.</th>'
             + '<th style="border:1px solid #333;padding:5px 12px;background:#e0e0e0;font-weight:700;">Kulfi Name</th>'
-            + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.printLotLabel + '</th>'
+            + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">' + d.lotLabel + '</th>'
             + '<th style="border:1px solid #333;padding:5px 10px;background:#e0e0e0;font-weight:700;">Quantity</th>'
             + '</tr></thead>'
             + '<tbody>' + rows + '</tbody>'
@@ -828,8 +560,5 @@
             link.click();
         });
     }
-
-    updateHistoryEditHint();
-    loadStockOrderHistory();
 </script>
 {% endblock %}
