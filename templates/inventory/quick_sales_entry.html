@@ -102,6 +102,12 @@
         </div>
     </div>
 
+    {% if user.is_staff %}
+    <div class="alert alert-light border mb-3">
+        <strong>Recording sales for:</strong> {{ target_user.get_full_name|default:target_user.username }}
+    </div>
+    {% endif %}
+
     <div class="card">
         <div class="card-header">
             <h5 class="mb-0">Products List</h5>

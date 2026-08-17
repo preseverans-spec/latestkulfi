@@ -689,6 +689,7 @@ def inventory_list(request):
         as_of_date = ''
         sort_by = 'sku'
         per_page = 50
+        view_mode = 'individual'
 
         request.session.pop('inventory_search_query', None)
         request.session.pop('inventory_category_filter', None)
@@ -697,6 +698,7 @@ def inventory_list(request):
         request.session.pop('inventory_as_of_date', None)
         request.session.pop('inventory_sort_by', None)
         request.session.pop('inventory_per_page', None)
+        request.session.pop('inventory_view_mode', None)
     else:
         search_query = request.GET.get('search', request.session.get('inventory_search_query', ''))
         category_filter = request.GET.getlist('category') or request.session.get('inventory_category_filter', [])
@@ -705,6 +707,9 @@ def inventory_list(request):
         as_of_date = request.GET.get('as_of_date', request.session.get('inventory_as_of_date', ''))
         sort_by = request.GET.get('sort', request.session.get('inventory_sort_by', 'sku'))
         per_page = int(request.GET.get('per_page', request.session.get('inventory_per_page', 50)))
+        view_mode = request.GET.get('view_mode', request.session.get('inventory_view_mode', 'individual'))
+        if view_mode not in ('individual', 'merged'):
+            view_mode = 'individual'
 
     request.session['inventory_search_query'] = search_query
     request.session['inventory_category_filter'] = category_filter
@@ -713,6 +718,7 @@ def inventory_list(request):
     request.session['inventory_as_of_date'] = as_of_date
     request.session['inventory_sort_by'] = sort_by
     request.session['inventory_per_page'] = per_page
+    request.session['inventory_view_mode'] = view_mode
 
     selected_date = None
     if as_of_date:
@@ -769,6 +775,7 @@ def inventory_list(request):
         # Remove 'KC' from product name for display
         if 'KC' in product.name:
             product.name = product.name.replace('KC', '').strip()
+        product.manufacturer_name = product.manufacturer.name if product.manufacturer else '-'
 
     movement_product_ids = set()
     if movement_filter:
@@ -793,10 +800,13 @@ def inventory_list(request):
         if not movement_exists:
             continue
 
-        if status_filter == 'low_stock' and display_stock > product.reorder_level:
-            continue
-        if status_filter == 'in_stock' and display_stock <= product.reorder_level:
-            continue
+        # Merged view compares combined stock across manufacturers, so status
+        # filtering happens after grouping instead of per individual product.
+        if view_mode != 'merged':
+            if status_filter == 'low_stock' and display_stock > product.reorder_level:
+                continue
+            if status_filter == 'in_stock' and display_stock <= product.reorder_level:
+                continue
 
         product_list.append(product)
 
@@ -810,18 +820,14 @@ def inventory_list(request):
         'IK0008', 'IK0011', 'IK0015', 'IK0012', 'IK0010', 'IK0007',
         'IK0009', 'IK0013', 'IK0014', 'IK0017', 'IK0018', 'IK0016',
     ]
-    if sort_attr == 'sku' and not reverse_sort:
-        _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
-        product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
-    else:
-        product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+    _sku_pos = {sku: i for i, sku in enumerate(_KULFI_SKU_ORDER)}
 
     # Calculate totals from source data with proper display_stock
     # Recalculate to ensure accuracy with filtered product_list
     total_stock = 0
     total_cost_price = Decimal('0.0')
     total_sales_price = Decimal('0.0')
-    
+
     for product in product_list:
         # Use display_stock which is the calculated stock for the selected date
         qty = product.display_stock if hasattr(product, 'display_stock') else (
@@ -831,7 +837,58 @@ def inventory_list(request):
         total_cost_price += Decimal(qty) * product.cost_price
         total_sales_price += Decimal(qty) * product.selling_price
 
-    paginator = Paginator(product_list, per_page)
+    if view_mode == 'merged':
+        # Combine same-name products across manufacturers into a single row,
+        # while keeping each manufacturer's individual stock for the breakdown.
+        merged_groups = defaultdict(list)
+        for product in product_list:
+            key = normalize_sales_product_name(product.name).lower()
+            merged_groups[key].append(product)
+
+        display_rows = []
+        for items in merged_groups.values():
+            display_name = normalize_sales_product_name(items[0].name)
+            combined_stock = sum(item.display_stock for item in items)
+            combined_reorder_level = sum(item.reorder_level for item in items)
+            avg_cost_price = (
+                sum(item.cost_price for item in items) / len(items) if items else Decimal('0.0')
+            )
+            avg_selling_price = (
+                sum(item.selling_price for item in items) / len(items) if items else Decimal('0.0')
+            )
+            sort_sku = min((item.sku for item in items), default='ZZZ999')
+
+            if status_filter == 'low_stock' and combined_stock > combined_reorder_level:
+                continue
+            if status_filter == 'in_stock' and combined_stock <= combined_reorder_level:
+                continue
+
+            display_rows.append({
+                'is_merged': True,
+                'name': display_name,
+                'display_stock': combined_stock,
+                'reorder_level': combined_reorder_level,
+                'cost_price': avg_cost_price,
+                'selling_price': avg_selling_price,
+                'sort_sku': sort_sku,
+                'breakdown': sorted(items, key=lambda item: item.manufacturer_name),
+            })
+
+        if sort_attr == 'sku' and not reverse_sort:
+            display_rows.sort(key=lambda row: _sku_pos.get(row['sort_sku'], len(_KULFI_SKU_ORDER)))
+        elif sort_attr == 'sku':
+            display_rows.sort(key=lambda row: row['sort_sku'], reverse=reverse_sort)
+        else:
+            merged_sort_attr = 'display_stock' if sort_attr == 'current_stock' else sort_attr
+            display_rows.sort(key=lambda row: row.get(merged_sort_attr, row['name']), reverse=reverse_sort)
+    else:
+        if sort_attr == 'sku' and not reverse_sort:
+            product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+        else:
+            product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
+        display_rows = product_list
+
+    paginator = Paginator(display_rows, per_page)
     page_number = request.GET.get('page', 1)
     try:
         paginated_products = paginator.page(page_number)
@@ -842,6 +899,7 @@ def inventory_list(request):
 
     context = {
         'products': paginated_products,
+        'view_mode': view_mode,
         'search_query': search_query,
         'category_filter': category_filter,
         'status_filter': status_filter,
@@ -1972,6 +2030,19 @@ def quick_sales_entry(request):
             grouped[key].append(product)
         return grouped
 
+    # Admins can pick a salesperson so recorded sales are attributed to them.
+    salespeople = User.objects.filter(is_staff=False, is_active=True).order_by('first_name', 'username')
+    target_user = request.user
+    selected_salesperson_id = ''
+    if request.user.is_staff:
+        selected_salesperson_id = request.POST.get('salesperson') or request.GET.get('salesperson', '')
+        if selected_salesperson_id:
+            try:
+                target_user = User.objects.get(pk=int(selected_salesperson_id), is_active=True, is_staff=False)
+            except (User.DoesNotExist, ValueError, TypeError):
+                target_user = request.user
+                selected_salesperson_id = ''
+                messages.warning(request, 'Selected salesperson not found. Recording under your own account.')
 
     if request.method == 'POST':
         action = request.POST.get('action', 'record_sales')
@@ -2216,7 +2287,7 @@ def quick_sales_entry(request):
                         quantity=allocated_quantity,
                         unit_price=product.selling_price,
                         sale_date=sale_date,
-                        recorded_by=request.user,
+                        recorded_by=target_user,
                         notes=notes,
                     )
 
@@ -2235,7 +2306,7 @@ def quick_sales_entry(request):
                 errors.append(f"Error processing row {i+1}: {str(e)}")
 
         # --- Clear sales count drafts for this user/date after recording sales ---
-        if not request.user.is_staff:
+        if not target_user.is_staff:
             # Use the first sale_date in sale_dates or today
             clear_date = None
             if sale_dates and sale_dates[0]:
@@ -2245,7 +2316,7 @@ def quick_sales_entry(request):
                     clear_date = timezone.now().date()
             else:
                 clear_date = timezone.now().date()
-            SalesCountDraft.objects.filter(salesperson=request.user, sales_date=clear_date).delete()
+            SalesCountDraft.objects.filter(salesperson=target_user, sales_date=clear_date).delete()
 
         # Rebuild live stock from historical records after backdated inserts.
         if touched_product_ids:
@@ -2260,8 +2331,12 @@ def quick_sales_entry(request):
                 sorted_dates = sorted(recorded_sale_dates)
                 date_text = f"{sorted_dates[0].strftime('%Y-%m-%d')} to {sorted_dates[-1].strftime('%Y-%m-%d')}"
 
+            salesperson_text = ''
+            if request.user.is_staff and target_user.id != request.user.id:
+                salesperson_text = f" for {target_user.get_full_name() or target_user.username}"
+
             messages.success(request, (
-                f'Successfully recorded {sales_created} sales, '
+                f'Successfully recorded {sales_created} sales{salesperson_text}, '
                 f'{total_items_sold} items sold, '
                 f'sales date: {date_text}, '
                 f'total selling price ₹{total_selling_price:.2f}'
@@ -2274,7 +2349,15 @@ def quick_sales_entry(request):
         if sales_created == 0 and not errors:
             messages.info(request, 'No sales were recorded.')
 
-        return redirect('quick_sales_entry')
+        redirect_url = reverse('quick_sales_entry')
+        redirect_params = []
+        if sale_dates and sale_dates[0]:
+            redirect_params.append(f"sales_date={sale_dates[0]}")
+        if request.user.is_staff and target_user.id != request.user.id:
+            redirect_params.append(f"salesperson={target_user.id}")
+        if redirect_params:
+            redirect_url = f"{redirect_url}?{'&'.join(redirect_params)}"
+        return redirect(redirect_url)
 
 
     # GET request - show form with stock as-of selected sales date
@@ -2292,8 +2375,8 @@ def quick_sales_entry(request):
 
     # --- Prefill sales count from draft if exists ---
     sales_count_drafts = {}
-    if not request.user.is_staff:
-        for draft in SalesCountDraft.objects.filter(salesperson=request.user, sales_date=selected_sales_date):
+    if not target_user.is_staff:
+        for draft in SalesCountDraft.objects.filter(salesperson=target_user, sales_date=selected_sales_date):
             sales_count_drafts[draft.product_key] = draft.sales_count
 
     # Daily Sales Sheet should always reflect live stock, even for backdated sale dates.
@@ -2307,7 +2390,7 @@ def quick_sales_entry(request):
     stock_taken_map = {
         get_sales_stock_taken_product_name_key(item.product_key or item.product_name): item.stock_taken_count
         for item in SalesStockTaken.objects.filter(
-            salesperson=request.user,
+            salesperson=target_user,
             sales_date=selected_sales_date,
         )
     }
@@ -2315,7 +2398,7 @@ def quick_sales_entry(request):
     for product in grouped_products_for_form:
         product['stock_taken_count'] = stock_taken_map.get(product['key'], 0)
         # Prefill logic: draft > stock_taken (if prefill_from_stock_taken) > 0
-        if not request.user.is_staff:
+        if not target_user.is_staff:
             if product['key'] in sales_count_drafts:
                 product['prefill_quantity'] = sales_count_drafts[product['key']]
             elif prefill_from_stock_taken:
@@ -2335,6 +2418,9 @@ def quick_sales_entry(request):
         'total_stock_taken_for_date': total_stock_taken_for_date,
         'total_combined_stock': total_combined_stock,
         'prefill_from_stock_taken': prefill_from_stock_taken,
+        'target_user': target_user,
+        'salespeople': salespeople,
+        'selected_salesperson_id': selected_salesperson_id,
     }
     return render(request, 'inventory/quick_sales_entry.html', context)
 

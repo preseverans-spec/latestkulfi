@@ -139,6 +139,16 @@
 <div class="row mb-3">
     <div class="col-12">
         <form method="GET" class="row g-2 align-items-center">
+            <div class="col-12 d-flex justify-content-end">
+                <div class="btn-group mb-2" role="group" aria-label="Inventory view mode">
+                    <button type="submit" name="view_mode" value="individual" class="btn btn-sm {% if view_mode == 'merged' %}btn-outline-primary{% else %}btn-primary{% endif %}">
+                        <i class="fas fa-list"></i> By Manufacturer
+                    </button>
+                    <button type="submit" name="view_mode" value="merged" class="btn btn-sm {% if view_mode == 'merged' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                        <i class="fas fa-layer-group"></i> Merged (All Manufacturers)
+                    </button>
+                </div>
+            </div>
             <div class="col-lg-3 col-md-6">
                 <input type="text" name="search" class="form-control" placeholder="Search name, SKU, category..." value="{{ search_query }}">
             </div>
@@ -265,6 +275,9 @@
             <thead class="table-light">
                 <tr>
                     <th class="draggable-header" draggable="true" data-column="name">Product Name</th>
+                    {% if view_mode != 'merged' %}
+                    <th class="draggable-header" draggable="true" data-column="manufacturer">Manufacturer</th>
+                    {% endif %}
                     <th class="draggable-header" draggable="true" data-column="current_stock">
                         {% if selected_date %}Stock as of {{ stock_as_of_label }}{% else %}Current Stock (Live){% endif %}
                     </th>
@@ -276,35 +289,95 @@
             </thead>
             <tbody>
                 {% for product in products %}
+                {% if view_mode == 'merged' %}
                 <tr>
-                    <td><strong>{{ product.name }}</strong></td>
-                    <td>{{ product.stock|default_if_none:product.display_stock|default_if_none:0 }}</td>
-                    <td>{{ product.reorder_level }}</td>
-                    <td>₹{{ product.selling_price }}</td>
                     <td>
-                        {% if product.stock|default_if_none:product.display_stock|default_if_none:0 <= product.reorder_level %}
+                        <strong>{{ product.name }}</strong>
+                        <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-bs-toggle="collapse" data-bs-target="#merged-breakdown-{{ forloop.counter }}" aria-expanded="false" title="Show manufacturer breakdown">
+                            <i class="fas fa-chevron-down"></i> details
+                        </button>
+                    </td>
+                    <td>{{ product.display_stock|default:0 }}</td>
+                    <td>{{ product.reorder_level }}</td>
+                    <td>₹{{ product.selling_price|floatformat:2 }}</td>
+                    <td>
+                        {% if product.display_stock|default:0 <= product.reorder_level %}
                         <span class="badge bg-danger">Low Stock</span>
                         {% else %}
                         <span class="badge bg-success">In Stock</span>
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{% url 'inventory_history' product.product_id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
+                        <a href="{% url 'quick_inventory_entry' %}" class="btn btn-sm btn-warning btn-action-compact" title="Quick Entry">
+                            <i class="fas fa-bolt"></i>
+                        </a>
+                    </td>
+                </tr>
+                <tr class="collapse" id="merged-breakdown-{{ forloop.counter }}">
+                    <td colspan="6" class="p-0">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Manufacturer</th>
+                                    <th>Stock</th>
+                                    <th>Selling Price</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in product.breakdown %}
+                                <tr>
+                                    <td>{{ item.manufacturer_name }}</td>
+                                    <td>{{ item.display_stock|default:0 }}</td>
+                                    <td>₹{{ item.selling_price }}</td>
+                                    <td>
+                                        <a href="{% url 'inventory_history' item.id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
+                                            <i class="fas fa-history"></i>
+                                        </a>
+                                        {% if user.is_staff %}
+                                        <a href="{% url 'clear_stock' item.id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
+                                            <i class="fas fa-broom"></i>
+                                        </a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td><strong>{{ product.name }}</strong></td>
+                    <td>{{ product.manufacturer_name }}</td>
+                    <td>{{ product.display_stock|default:0 }}</td>
+                    <td>{{ product.reorder_level }}</td>
+                    <td>₹{{ product.selling_price }}</td>
+                    <td>
+                        {% if product.display_stock|default:0 <= product.reorder_level %}
+                        <span class="badge bg-danger">Low Stock</span>
+                        {% else %}
+                        <span class="badge bg-success">In Stock</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'inventory_history' product.id %}" class="btn btn-sm btn-info btn-action-compact" title="View History">
                             <i class="fas fa-history"></i>
                         </a>
                         <a href="{% url 'quick_inventory_entry' %}" class="btn btn-sm btn-warning btn-action-compact" title="Quick Entry">
                             <i class="fas fa-bolt"></i>
                         </a>
                         {% if user.is_staff %}
-                        <a href="{% url 'clear_stock' product.product_id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
+                        <a href="{% url 'clear_stock' product.id %}" class="btn btn-sm btn-dark btn-action-compact" title="Clear Stock">
                             <i class="fas fa-broom"></i>
                         </a>
                         {% endif %}
                     </td>
                 </tr>
+                {% endif %}
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="text-center text-muted">No products found</td>
+                    <td colspan="7" class="text-center text-muted">No products found</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -317,7 +390,7 @@
             <ul class="pagination justify-content-center">
                 {% if products.has_previous %}
                 <li class="page-item">
-                    <a class="page-link" href="?page={{ products.previous_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}" aria-label="Previous">
+                    <a class="page-link" href="?page={{ products.previous_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}&view_mode={{ view_mode }}" aria-label="Previous">
                         <span aria-hidden="true">&laquo;</span>
                     </a>
                 </li>
@@ -327,13 +400,13 @@
 
                 {% for page in paginator.page_range %}
                 <li class="page-item {% if products.number == page %}active{% endif %}">
-                    <a class="page-link" href="?page={{ page }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}">{{ page }}</a>
+                    <a class="page-link" href="?page={{ page }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}&view_mode={{ view_mode }}">{{ page }}</a>
                 </li>
                 {% endfor %}
 
                 {% if products.has_next %}
                 <li class="page-item">
-                    <a class="page-link" href="?page={{ products.next_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}" aria-label="Next">
+                    <a class="page-link" href="?page={{ products.next_page_number }}&search={{ search_query }}&status={{ status_filter }}&movement_type={{ movement_filter }}&as_of_date={{ as_of_date }}{% for c in category_filter %}&category={{ c }}{% endfor %}&sort={{ sort_by }}&per_page={{ per_page }}&view_mode={{ view_mode }}" aria-label="Next">
                         <span aria-hidden="true">&raquo;</span>
                     </a>
                 </li>
