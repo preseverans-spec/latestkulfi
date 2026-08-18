@@ -3,6 +3,33 @@
 from django.db import migrations, models
 
 
+def rename_manufacturer_scopes(apps, schema_editor):
+    Manufacturer = apps.get_model('inventory', 'Manufacturer')
+    Product = apps.get_model('inventory', 'Product')
+
+    for old_name, new_name, new_code in (
+        ('Indian Kulfi', 'Bowring', 'BOWRING'),
+        ('Kulfi Corner', 'New Bowring', 'NEW_BOWRING'),
+    ):
+        old = Manufacturer.objects.filter(name__iexact=old_name).first()
+        new = Manufacturer.objects.filter(name__iexact=new_name).first()
+        if not old:
+            continue
+        if new and new.pk != old.pk:
+            Product.objects.filter(manufacturer_id=old.pk).update(manufacturer_id=new.pk)
+            old.delete()
+        else:
+            old.name = new_name
+            old.code = new_code
+            old.save(update_fields=('name', 'code'))
+
+
+def restore_manufacturer_scopes(apps, schema_editor):
+    Manufacturer = apps.get_model('inventory', 'Manufacturer')
+    Manufacturer.objects.filter(name__iexact='bowring').update(name='Indian Kulfi', code='INDIAN_KULFI')
+    Manufacturer.objects.filter(name__iexact='new bowring').update(name='Kulfi Corner', code='KULFI_CORNER')
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,50 +37,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
-            sql="""
-                DO $$
-                DECLARE
-                    old_id bigint;
-                    new_id bigint;
-                BEGIN
-                    -- Rename 'Indian Kulfi' -> 'Bowring', merging into an existing
-                    -- 'Bowring' row (repointing products) if one already exists.
-                    SELECT id INTO old_id FROM inventory_manufacturer WHERE LOWER(name) = 'indian kulfi';
-                    SELECT id INTO new_id FROM inventory_manufacturer WHERE LOWER(name) = 'bowring';
-                    IF old_id IS NOT NULL THEN
-                        IF new_id IS NOT NULL AND new_id <> old_id THEN
-                            UPDATE inventory_product SET manufacturer_id = new_id WHERE manufacturer_id = old_id;
-                            DELETE FROM inventory_manufacturer WHERE id = old_id;
-                        ELSE
-                            UPDATE inventory_manufacturer SET name = 'Bowring', code = 'BOWRING' WHERE id = old_id;
-                        END IF;
-                    END IF;
-
-                    -- Rename 'Kulfi Corner' -> 'New Bowring', merging into an existing
-                    -- 'New Bowring' row (repointing products) if one already exists.
-                    SELECT id INTO old_id FROM inventory_manufacturer WHERE LOWER(name) = 'kulfi corner';
-                    SELECT id INTO new_id FROM inventory_manufacturer WHERE LOWER(name) = 'new bowring';
-                    IF old_id IS NOT NULL THEN
-                        IF new_id IS NOT NULL AND new_id <> old_id THEN
-                            UPDATE inventory_product SET manufacturer_id = new_id WHERE manufacturer_id = old_id;
-                            DELETE FROM inventory_manufacturer WHERE id = old_id;
-                        ELSE
-                            UPDATE inventory_manufacturer SET name = 'New Bowring', code = 'NEW_BOWRING' WHERE id = old_id;
-                        END IF;
-                    END IF;
-                END $$;
-            """,
-            reverse_sql="""
-                UPDATE inventory_manufacturer
-                SET name = 'Indian Kulfi', code = 'INDIAN_KULFI'
-                WHERE LOWER(name) = 'bowring';
-
-                UPDATE inventory_manufacturer
-                SET name = 'Kulfi Corner', code = 'KULFI_CORNER'
-                WHERE LOWER(name) = 'new bowring';
-            """,
-        ),
+        migrations.RunPython(rename_manufacturer_scopes, restore_manufacturer_scopes),
         migrations.AlterField(
             model_name='product',
             name='name',

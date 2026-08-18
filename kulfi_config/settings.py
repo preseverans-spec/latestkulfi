@@ -126,7 +126,13 @@ if DATABASE_URL:
         )
     }
 
-    if not db_ssl_require:
+    if DATABASES['default']['ENGINE'] != 'django.db.backends.postgresql':
+        DATABASES['default'].get('OPTIONS', {}).pop('sslmode', None)
+
+    if (
+        DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql'
+        and not db_ssl_require
+    ):
         DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = os.getenv('DB_SSLMODE', 'disable')
 else:
     DATABASES = {

@@ -4,6 +4,86 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def create_manufacturer_schema(apps, schema_editor):
+    connection = schema_editor.connection
+    if connection.vendor != 'sqlite':
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO inventory_manufacturer (name, code, description, is_active, created_at, updated_at)
+                VALUES ('Indian Kulfi', 'INDIAN_KULFI', '', TRUE, NOW(), NOW())
+                ON CONFLICT (name) DO NOTHING
+            """)
+            cursor.execute("""
+                INSERT INTO inventory_manufacturer (name, code, description, is_active, created_at, updated_at)
+                VALUES ('Kulfi Corner', 'KULFI_CORNER', '', TRUE, NOW(), NOW())
+                ON CONFLICT (name) DO NOTHING
+            """)
+            cursor.execute("""
+                ALTER TABLE inventory_product
+                ADD COLUMN IF NOT EXISTS manufacturer_id bigint NULL
+            """)
+            cursor.execute("""
+                ALTER TABLE inventory_product
+                ADD CONSTRAINT inventory_product_manufacturer_id_fk
+                FOREIGN KEY (manufacturer_id) REFERENCES inventory_manufacturer(id) DEFERRABLE INITIALLY DEFERRED
+            """)
+            cursor.execute("""
+                UPDATE inventory_product
+                SET manufacturer_id = inventory_manufacturer.id
+                FROM inventory_manufacturer
+                WHERE inventory_product.manufacturer_id IS NULL
+                  AND LOWER(COALESCE(inventory_product.category, '')) = LOWER(inventory_manufacturer.name)
+            """)
+        return
+
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inventory_manufacturer (
+                id integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                name varchar(100) NOT NULL UNIQUE,
+                code varchar(50) NOT NULL UNIQUE,
+                description text NOT NULL,
+                is_active bool NOT NULL,
+                created_at datetime NOT NULL,
+                updated_at datetime NOT NULL
+            )
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO inventory_manufacturer
+                (name, code, description, is_active, created_at, updated_at)
+            VALUES ('Indian Kulfi', 'INDIAN_KULFI', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO inventory_manufacturer
+                (name, code, description, is_active, created_at, updated_at)
+            VALUES ('Kulfi Corner', 'KULFI_CORNER', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """)
+        product_columns = {
+            row[1] for row in cursor.execute('PRAGMA table_info(inventory_product)').fetchall()
+        }
+        if 'manufacturer_id' not in product_columns:
+            cursor.execute('ALTER TABLE inventory_product ADD COLUMN manufacturer_id bigint NULL')
+        cursor.execute("""
+            UPDATE inventory_product
+            SET manufacturer_id = (
+                SELECT id FROM inventory_manufacturer
+                WHERE LOWER(inventory_manufacturer.name) = LOWER(COALESCE(inventory_product.category, ''))
+            )
+            WHERE manufacturer_id IS NULL
+        """)
+
+
+def drop_manufacturer_schema(apps, schema_editor):
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        if connection.vendor != 'sqlite':
+            cursor.execute('ALTER TABLE inventory_product DROP CONSTRAINT IF EXISTS inventory_product_manufacturer_id_fk')
+            cursor.execute('ALTER TABLE inventory_product DROP COLUMN IF EXISTS manufacturer_id')
+        else:
+            cursor.execute('ALTER TABLE inventory_product DROP COLUMN manufacturer_id')
+        cursor.execute('DROP TABLE IF EXISTS inventory_manufacturer')
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -14,35 +94,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.SeparateDatabaseAndState(
             database_operations=[
-                migrations.RunSQL(
-                    sql="""
-                        INSERT INTO inventory_manufacturer (name, code, description, is_active, created_at, updated_at)
-                        VALUES ('Indian Kulfi', 'INDIAN_KULFI', '', TRUE, NOW(), NOW())
-                        ON CONFLICT (name) DO NOTHING;
-                        INSERT INTO inventory_manufacturer (name, code, description, is_active, created_at, updated_at)
-                        VALUES ('Kulfi Corner', 'KULFI_CORNER', '', TRUE, NOW(), NOW())
-                        ON CONFLICT (name) DO NOTHING;
-                        ALTER TABLE inventory_product
-                        ADD COLUMN IF NOT EXISTS manufacturer_id bigint NULL;
-                        DO $$
-                        BEGIN
-                            ALTER TABLE inventory_product
-                            ADD CONSTRAINT inventory_product_manufacturer_id_fk
-                            FOREIGN KEY (manufacturer_id) REFERENCES inventory_manufacturer(id) DEFERRABLE INITIALLY DEFERRED;
-                        EXCEPTION
-                            WHEN duplicate_object THEN NULL;
-                        END $$;
-                        UPDATE inventory_product
-                        SET manufacturer_id = inventory_manufacturer.id
-                        FROM inventory_manufacturer
-                        WHERE inventory_product.manufacturer_id IS NULL
-                          AND LOWER(COALESCE(inventory_product.category, '')) = LOWER(inventory_manufacturer.name);
-                    """,
-                    reverse_sql="""
-                        ALTER TABLE inventory_product DROP CONSTRAINT IF EXISTS inventory_product_manufacturer_id_fk;
-                        ALTER TABLE inventory_product DROP COLUMN IF EXISTS manufacturer_id;
-                    """,
-                ),
+                migrations.RunPython(create_manufacturer_schema, drop_manufacturer_schema),
             ],
             state_operations=[
                 migrations.CreateModel(

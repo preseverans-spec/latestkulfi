@@ -1441,9 +1441,49 @@ def quick_inventory_entry(request):
         return redirect(f"{reverse('quick_inventory_entry')}?manufacturer={selected_manufacturer.name}&movement_date={selected_movement_date_raw or ''}")
 
     manufacturer_products = _get_products_for_manufacturer(selected_manufacturer)
+    grouped_products = defaultdict(list)
+    for product in Product.objects.filter(is_active=True).select_related('manufacturer'):
+        grouped_products[normalize_sales_product_name(product.name)].append(product)
+
+    product_groups = []
+    for group_name, products in grouped_products.items():
+        row = {
+            'name': group_name,
+            'ik': None,
+            'kc': None,
+            'ik_stock': 0,
+            'kc_stock': 0,
+            'total_stock': 0,
+        }
+        for product in products:
+            product_name = (product.name or '').upper()
+            manufacturer_name = (
+                product.manufacturer.name
+                if product.manufacturer
+                else product.category or ''
+            ).upper()
+            is_kc = (
+                product_name.startswith('KC')
+                or 'CORNER' in manufacturer_name
+                or 'NEW BOWRING' in manufacturer_name
+            )
+            stock = max(0, product.current_stock)
+            if is_kc:
+                if row['kc'] is None or product.sku.upper().startswith('KC'):
+                    row['kc'] = product
+                row['kc_stock'] += stock
+            else:
+                if row['ik'] is None or product.sku.upper().startswith('IK'):
+                    row['ik'] = product
+                row['ik_stock'] += stock
+            row['total_stock'] += stock
+        product_groups.append(row)
+
+    product_groups.sort(key=lambda row: get_sales_stock_taken_product_sort_key(row['name']))
     context = {
         'manufacturers': manufacturers,
         'manufacturer_products': manufacturer_products,
+        'product_groups': product_groups,
         'today': timezone.now().date(),
         'selected_movement_date': selected_movement_date,
         'selected_manufacturer': selected_manufacturer.name if selected_manufacturer else '',
@@ -1616,8 +1656,8 @@ def normalize_sales_product_name(name):
     """Normalize product name for manufacturer-agnostic sales grouping."""
     cleaned_name = re.sub(r'\s+', ' ', (name or '').strip())
     # Remove leading manufacturer tokens used in product names (e.g., 'IK Malai', 'KC Malai').
-    cleaned_name = re.sub(r'^(IK|KC)\s*[-:]*\s*', '', cleaned_name, flags=re.IGNORECASE)
-    cleaned_name = re.sub(r'\s*\((IK|KC)\)$', '', cleaned_name, flags=re.IGNORECASE)
+    cleaned_name = re.sub(r'^(IK|KC|NB)\s*[-:]*\s*\d*\s*', '', cleaned_name, flags=re.IGNORECASE)
+    cleaned_name = re.sub(r'\s*\((IK|KC|NB)\)$', '', cleaned_name, flags=re.IGNORECASE)
     return cleaned_name.strip()
 
 
@@ -1682,10 +1722,10 @@ DAILY_SALES_PRODUCT_DISPLAY_ORDER = [
     'mango malai',
     'butterscotch',
     'coconut',
-    'elaichi',
     'guava',
-    'paan',
     'kesar kajoor',
+    'elaichi',
+    'paan',
 ]
 DAILY_SALES_PRODUCT_DISPLAY_INDEX = {
     name: index for index, name in enumerate(DAILY_SALES_PRODUCT_DISPLAY_ORDER)
@@ -1710,10 +1750,10 @@ SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER = [
     'mango malai',
     'butterscotch',
     'coconut',
-    'elaichi',
     'guava',
-    'paan',
     'kesar kajoor',
+    'elaichi',
+    'paan',
 ]
 SALES_STOCK_TAKEN_PRODUCT_DISPLAY_INDEX = {
     name: index for index, name in enumerate(SALES_STOCK_TAKEN_PRODUCT_DISPLAY_ORDER)
@@ -3439,6 +3479,22 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
 
     total_cost = sum(Decimal(sale.quantity) * sale.product.cost_price for sale in sales)
     total_profit = total_revenue - total_cost
+    total_quantity = sales.aggregate(
+        total=Coalesce(Sum('quantity'), 0, output_field=IntegerField())
+    )['total']
+    total_operation_cost = OperationsExpense.objects.filter(
+        operation_date__gte=start_date,
+        operation_date__lte=end_date,
+    ).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    total_operation_income = OperationsIncome.objects.filter(
+        income_date__gte=start_date,
+        income_date__lte=end_date,
+    ).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    total_net_profit = total_profit - total_operation_cost + total_operation_income
 
     daily_data = {}
     for i in range((end_date - start_date).days + 1):
@@ -3447,12 +3503,26 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         daily_data[current_date.strftime('%a, %m/%d')] = {
             'count': daily_sales.count(),
             'quantity': daily_sales.aggregate(
-                total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
+                total=Coalesce(Sum('quantity'), 0, output_field=IntegerField())
             )['total'],
             'revenue': daily_sales.aggregate(
                 total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
-            )['total']
+            )['total'],
         }
+        daily_data[current_date.strftime('%a, %m/%d')]['cogs'] = sum(
+            Decimal(sale.quantity) * sale.product.cost_price
+            for sale in daily_sales
+        )
+        daily_data[current_date.strftime('%a, %m/%d')]['operation_cost'] = OperationsExpense.objects.filter(
+            operation_date=current_date,
+        ).aggregate(
+            total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+        )['total']
+        daily_data[current_date.strftime('%a, %m/%d')]['net_profit'] = (
+            daily_data[current_date.strftime('%a, %m/%d')]['revenue']
+            - daily_data[current_date.strftime('%a, %m/%d')]['cogs']
+            - daily_data[current_date.strftime('%a, %m/%d')]['operation_cost']
+        )
 
     weekly_product_breakdown_map = {}
     for sale in sales:
@@ -3492,6 +3562,11 @@ def _build_weekly_report_context(start_date, end_date, salesperson=None):
         'end_date': end_date,
         'total_revenue': total_revenue,
         'total_cost': total_cost,
+        'total_quantity': total_quantity,
+        'total_cogs': total_cost,
+        'total_operation_cost': total_operation_cost,
+        'total_operation_income': total_operation_income,
+        'total_net_profit': total_net_profit,
         'total_profit': total_profit,
         'total_transactions': sales.count(),
         'daily_data': daily_data,
@@ -3660,7 +3735,13 @@ def _extract_positive_adjustment_qty(notes):
     return int(match.group(1)) if match else 0
 
 
-def _build_stock_report_context(start_date, end_date, include_positive_adjustments=False, report_mode='detailed'):
+def _build_stock_report_context(
+    start_date,
+    end_date,
+    include_positive_adjustments=False,
+    report_mode='detailed',
+    selected_manufacturer='',
+):
     movement_types = ['IN']
     if include_positive_adjustments:
         movement_types.append('ADJUSTMENT')
@@ -3669,7 +3750,6 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         movement_type__in=movement_types,
         movement_date__gte=start_date,
         movement_date__lte=end_date,
-        product__category='Indian Kulfi',
     ).select_related('product', 'created_by').order_by(
         '-movement_date',
         'product__category',
@@ -3707,6 +3787,19 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
             'Indian Kulfi': 'Bowring',
             'New Bowring': 'New Bowring',
         }.get(resolved_manufacturer, resolved_manufacturer)
+
+        if selected_manufacturer:
+            selected_normalized = _normalize_manufacturer_name(selected_manufacturer)
+            resolved_normalized = _normalize_manufacturer_name(resolved_manufacturer)
+            selected_aliases = {
+                'INDIAN KULFI': 'BOWRING',
+                'BOWRING': 'BOWRING',
+                'NEW BOWRING': 'NEW BOWRING',
+            }
+            if selected_normalized.endswith(' CORNER'):
+                selected_normalized = 'NEW BOWRING'
+            if selected_aliases.get(selected_normalized, selected_normalized) != selected_aliases.get(resolved_normalized, resolved_normalized):
+                continue
 
         unit_cost_val = movement.unit_cost or movement.product.cost_price
         movement_rows.append({
@@ -3768,6 +3861,7 @@ def _build_stock_report_context(start_date, end_date, include_positive_adjustmen
         'include_positive_adjustments': include_positive_adjustments,
         'general_rows': general_rows,
         'report_mode': report_mode,
+        'selected_manufacturer': selected_manufacturer,
     }
 
 @login_required
@@ -3943,6 +4037,10 @@ def stock_report(request):
     """Stock-in report by date range for Bowring and New Bowring."""
     start_date_raw = (request.GET.get('start_date') or '').strip()
     end_date_raw = (request.GET.get('end_date') or '').strip()
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
+    manufacturer_options = list(
+        Manufacturer.objects.filter(is_active=True).values_list('name', flat=True).order_by('name')
+    )
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
@@ -3961,6 +4059,8 @@ def stock_report(request):
             'total_purchase_cost': Decimal('0.0'),
             'include_positive_adjustments': include_positive_adjustments,
             'report_mode': report_mode,
+            'selected_manufacturer': selected_manufacturer,
+            'manufacturer_options': manufacturer_options,
             'no_filter': True,
         }
         return render(request, 'inventory/stock_report.html', context)
@@ -3993,7 +4093,9 @@ def stock_report(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
+    context['manufacturer_options'] = manufacturer_options
     context['no_filter'] = False
     return render(request, 'inventory/stock_report.html', context)
 
@@ -4004,6 +4106,7 @@ def print_stock_report_html(request):
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
         report_mode = 'detailed'
@@ -4032,6 +4135,7 @@ def print_stock_report_html(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
     context['now'] = timezone.now()
     return render(request, 'inventory/print_stock_report.html', context)
@@ -4043,6 +4147,7 @@ def print_stock_report_pdf(request):
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
         report_mode = 'detailed'
@@ -4071,6 +4176,7 @@ def print_stock_report_pdf(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4128,7 +4234,7 @@ def print_stock_report_pdf(request):
                 movement = row['movement']
                 data.append([
                     movement.movement_date.strftime('%Y-%m-%d'),
-                    movement.product.category,
+                    row['resolved_manufacturer'],
                     row['entry_type'],
                     movement.product.sku,
                     movement.product.name,
@@ -4171,6 +4277,7 @@ def print_stock_report_excel(request):
     start_date_raw = request.GET.get('start_date')
     end_date_raw = request.GET.get('end_date')
     include_positive_adjustments = request.GET.get('include_adjustments') == '1'
+    selected_manufacturer = (request.GET.get('manufacturer') or '').strip()
     report_mode = request.GET.get('view_mode', 'detailed')
     if report_mode not in ('general', 'detailed'):
         report_mode = 'detailed'
@@ -4199,6 +4306,7 @@ def print_stock_report_excel(request):
         end_date,
         include_positive_adjustments=include_positive_adjustments,
         report_mode=report_mode,
+        selected_manufacturer=selected_manufacturer,
     )
 
     try:
@@ -4253,7 +4361,7 @@ def print_stock_report_excel(request):
             for row in context['movement_rows']:
                 movement = row['movement']
                 ws.cell(row=row_number, column=1).value = movement.movement_date.strftime('%Y-%m-%d')
-                ws.cell(row=row_number, column=2).value = movement.product.category
+                ws.cell(row=row_number, column=2).value = row['resolved_manufacturer']
                 ws.cell(row=row_number, column=3).value = row['entry_type']
                 ws.cell(row=row_number, column=4).value = movement.product.sku
                 ws.cell(row=row_number, column=5).value = movement.product.name

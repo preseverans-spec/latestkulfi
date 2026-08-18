@@ -6,6 +6,11 @@ from rest_framework import serializers
 from inventory.models import Inventory, OperationsExpense, Product, Sales
 
 
+class SyncRequestSerializer(serializers.Serializer):
+    device_id = serializers.CharField(required=False, allow_blank=True)
+    records = serializers.ListField(required=False, child=serializers.DictField())
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
 
@@ -13,7 +18,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = ('id', 'username', 'first_name', 'last_name', 'email', 'is_staff', 'role')
 
-    def get_role(self, obj):
+    def get_role(self, obj) -> str:
         return 'admin' if obj.is_staff else 'sales'
 
 
@@ -39,7 +44,7 @@ class ProductSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('created_at', 'updated_at', 'profit_per_unit')
 
-    def get_profit_per_unit(self, obj):
+    def get_profit_per_unit(self, obj) -> Decimal:
         return obj.get_profit_per_unit()
 
 
@@ -131,7 +136,7 @@ class SalesSerializer(serializers.ModelSerializer):
         product = attrs.get('product') or getattr(self.instance, 'product', None)
         quantity = attrs.get('quantity', getattr(self.instance, 'quantity', 0))
 
-        if product and quantity and quantity <= 0:
+        if product and quantity is not None and quantity <= 0:
             raise serializers.ValidationError({'quantity': 'Quantity must be greater than zero.'})
 
         if product and quantity:

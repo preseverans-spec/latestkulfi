@@ -19,6 +19,7 @@ from .serializers import (
     OperationsExpenseSerializer,
     ProductSerializer,
     SalesSerializer,
+    SyncRequestSerializer,
     UserProfileSerializer,
 )
 
@@ -73,7 +74,12 @@ class MobileTokenRefreshView(TokenRefreshView):
 
 
 class AuthViewSet(ResponseEnvelopeMixin, viewsets.GenericViewSet):
+    serializer_class = UserProfileSerializer
+    queryset = User.objects.all()
     permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        return User.objects.filter(pk=self.request.user.pk)
 
     @action(detail=False, methods=['get'])
     def me(self, request):
@@ -158,6 +164,7 @@ class InventoryViewSet(ResponseEnvelopeMixin, mixins.ListModelMixin, mixins.Crea
 
 class SalesViewSet(ResponseEnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = SalesSerializer
+    queryset = Sales.objects.all()
     permission_classes = (IsAuthenticated, IsStaffOrOwner)
 
     def get_queryset(self):
@@ -202,6 +209,7 @@ class SalesViewSet(ResponseEnvelopeMixin, viewsets.ModelViewSet):
 
 class OperationsExpenseViewSet(ResponseEnvelopeMixin, viewsets.ModelViewSet):
     serializer_class = OperationsExpenseSerializer
+    queryset = OperationsExpense.objects.all()
     permission_classes = (IsAuthenticated, IsStaffOrOwner)
 
     def get_queryset(self):
@@ -241,6 +249,8 @@ class OperationsExpenseViewSet(ResponseEnvelopeMixin, viewsets.ModelViewSet):
 
 
 class SyncViewSet(viewsets.GenericViewSet):
+    serializer_class = SyncRequestSerializer
+    queryset = SyncEvent.objects.all()
     permission_classes = (IsAuthenticated,)
 
     def _effect(self, movement_type, quantity):

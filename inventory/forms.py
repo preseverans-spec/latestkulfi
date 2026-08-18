@@ -46,6 +46,18 @@ class ManufacturerForm(forms.ModelForm):
 
 
 class ProductForm(forms.ModelForm):
+    def clean_name(self):
+        name = (self.cleaned_data.get('name') or '').strip()
+        manufacturer = self.cleaned_data.get('manufacturer')
+        duplicate_query = Product.objects.filter(name__iexact=name, manufacturer=manufacturer)
+        if self.instance and self.instance.pk:
+            duplicate_query = duplicate_query.exclude(pk=self.instance.pk)
+        if name and manufacturer and duplicate_query.exists():
+            raise forms.ValidationError(
+                'A product with this name already exists for the selected manufacturer.'
+            )
+        return name
+
     def clean_cost_price(self):
         cost_price = self.cleaned_data.get('cost_price')
         if cost_price is not None and cost_price < 0:
