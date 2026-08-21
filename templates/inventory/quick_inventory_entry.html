@@ -257,6 +257,16 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function applyUnitToAllRows(unit) {
+        document.querySelectorAll('.quantity-unit').forEach(function(select) {
+            select.value = unit;
+        });
+        getVisibleRows().forEach(function(row) {
+            updateEffectiveQty(row);
+        });
+        updateSummary();
+    }
+
     function reloadForSelection() {
         const params = new URLSearchParams(window.location.search);
         const manufacturer = manufacturerFilter ? manufacturerFilter.value : '';
@@ -311,8 +321,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         unitSelect.addEventListener('change', function() {
-            updateEffectiveQty(row);
-            updateSummary();
+            applyUnitToAllRows(unitSelect.value);
         });
 
         movementTypeSelect.addEventListener('change', function() {

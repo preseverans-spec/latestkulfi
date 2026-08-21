@@ -82,14 +82,14 @@ def _get_manufacturer_by_name(manufacturer_name):
     return Manufacturer.objects.filter(name__iexact=manufacturer_name, is_active=True).first()
 
 
-def _get_products_for_manufacturer(manufacturer):
+def _get_products_for_manufacturer(manufacturer, include_inactive=False):
     if not manufacturer:
         return Product.objects.none()
 
-    products = list(
-        Product.objects.filter(is_active=True, manufacturer=manufacturer)
-        .select_related('manufacturer')
-    )
+    products_qs = Product.objects.filter(manufacturer=manufacturer).select_related('manufacturer')
+    if not include_inactive:
+        products_qs = products_qs.filter(is_active=True)
+    products = list(products_qs)
     products.sort(key=lambda product: get_daily_sales_product_sort_key(product.name, product.sku or ''))
     return products
 
@@ -394,6 +394,25 @@ def manufacturer_product_list(request, manufacturer_key):
         'products': products,
     }
     return render(request, 'inventory/manufacturer_product_list.html', context)
+
+
+@login_required
+@permission_required('inventory.delete_product', raise_exception=True)
+def delete_manufacturer(request, manufacturer_key):
+    """Soft delete all manufacturer records grouped under this scope."""
+    scopes = _build_manufacturer_scopes()
+    selected_scope = next((scope for scope in scopes if scope['key'] == manufacturer_key), None)
+    if not selected_scope:
+        messages.error(request, 'Manufacturer not found.')
+        return redirect('manufacturer_list')
+
+    if request.method == 'POST':
+        Manufacturer.objects.filter(id__in=selected_scope['manufacturer_ids']).update(is_active=False)
+        messages.success(request, f'Manufacturer "{selected_scope["name"]}" deleted successfully.')
+        return redirect('manufacturer_list')
+
+    context = {'manufacturer_scope': selected_scope}
+    return render(request, 'inventory/confirm_delete_manufacturer.html', context)
 
 
 @login_required
@@ -905,7 +924,7 @@ def inventory_list(request):
             })
 
         if sort_attr == 'sku' and not reverse_sort:
-            display_rows.sort(key=lambda row: _sku_pos.get(row['sort_sku'], len(_KULFI_SKU_ORDER)))
+            display_rows.sort(key=lambda row: get_daily_sales_product_sort_key(row['name'], row['sort_sku']))
         elif sort_attr == 'sku':
             display_rows.sort(key=lambda row: row['sort_sku'], reverse=reverse_sort)
         else:
@@ -1642,7 +1661,7 @@ def stock_order(request):
                 'name': product.name,
                 'cost': float(product.cost_price or 0),
             }
-            for product in _get_products_for_manufacturer(manufacturer)
+            for product in _get_products_for_manufacturer(manufacturer, include_inactive=True)
         ]
     return render(request, 'inventory/stock_order.html', {
         'today': today,

@@ -1,0 +1,32 @@
+{% extends 'inventory/base.html' %}
+
+{% block title %}Confirm Delete - {{ manufacturer_scope.name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5>Confirm Delete</h5>
+    </div>
+    <div class="card-body">
+        <p>Are you sure you want to delete <strong>{{ manufacturer_scope.name }}</strong>?</p>
+        {% if manufacturer_scope.product_count %}
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            This manufacturer has <strong>{{ manufacturer_scope.product_count }}</strong> active product(s). They will remain but will no longer be linked to an active manufacturer.
+        </div>
+        {% endif %}
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Warning:</strong> This action will remove the manufacturer from the list. It cannot be undone.
+        </div>
+
+        <form method="POST">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Yes, delete manufacturer</button>
+            <a href="{% url 'manufacturer_list' %}" class="btn btn-secondary d-inline-flex align-items-center gap-2">
+                <i class="fas fa-times"></i> Cancel
+            </a>
+        </form>
+    </div>
+</div>
+{% endblock %}
