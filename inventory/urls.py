@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path('save_stock_order/', views.save_stock_order, name='save_stock_order'),
+    path('internal/wipe-after-date/', views.wipe_after_date_view, name='wipe_after_date'),
     # Authentication
     path('', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),

@@ -177,6 +177,31 @@ def admin_only_view(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped_view
 
+
+def wipe_after_date_view(request):
+    """One-time maintenance endpoint: run the wipe_after_date management command
+    from inside Render's network. Requires superuser login plus a matching WIPE_TOKEN
+    env var. Defaults to dry-run; pass confirm=1 to actually delete."""
+    if not request.user.is_authenticated or not request.user.is_superuser:
+        return HttpResponse('Forbidden', status=403)
+
+    expected_token = os.environ.get('WIPE_TOKEN', '')
+    if not expected_token or request.GET.get('token') != expected_token:
+        return HttpResponse('Forbidden', status=403)
+
+    after = request.GET.get('after')
+    if not after:
+        return HttpResponse('Missing ?after=YYYY-MM-DD', status=400)
+    confirm = request.GET.get('confirm') == '1'
+
+    from django.core.management import call_command
+    buf = io.StringIO()
+    args = ['--after', after]
+    if confirm:
+        args.append('--confirm')
+    call_command('wipe_after_date', *args, stdout=buf)
+    return HttpResponse(buf.getvalue(), content_type='text/plain')
+
 # ==================== AUTHENTICATION ====================
 
 def login_view(request):
