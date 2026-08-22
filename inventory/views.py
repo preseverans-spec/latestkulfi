@@ -177,34 +177,6 @@ def admin_only_view(view_func):
         return view_func(request, *args, **kwargs)
     return _wrapped_view
 
-
-def rotate_db_password_view(request):
-    """One-time maintenance endpoint: rotate the Postgres user's password in-place
-    from inside Render's network. Requires superuser login plus a matching
-    ROTATE_TOKEN env var. Generates the new password server-side and returns it once."""
-    if not request.user.is_authenticated or not request.user.is_superuser:
-        return HttpResponse('Forbidden', status=403)
-
-    expected_token = os.environ.get('ROTATE_TOKEN', '')
-    if not expected_token or request.GET.get('token') != expected_token:
-        return HttpResponse('Forbidden', status=403)
-
-    import secrets
-    from django.db import connection
-    from psycopg import sql
-
-    db_user = connection.settings_dict['USER']
-    new_password = secrets.token_urlsafe(24)
-    with connection.cursor() as cursor:
-        cursor.execute(
-            sql.SQL("ALTER USER {} WITH PASSWORD %s").format(sql.Identifier(db_user)),
-            [new_password],
-        )
-    return HttpResponse(
-        f"Rotated password for DB user: {db_user}\nNew password: {new_password}\n",
-        content_type='text/plain',
-    )
-
 # ==================== AUTHENTICATION ====================
 
 def login_view(request):

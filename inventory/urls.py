@@ -4,7 +4,6 @@ from . import views
 
 urlpatterns = [
     path('save_stock_order/', views.save_stock_order, name='save_stock_order'),
-    path('internal/rotate-db-password/', views.rotate_db_password_view, name='rotate_db_password'),
     # Authentication
     path('', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
