@@ -5,25 +5,59 @@ from .models import StockOrder, StockOrderItem
 @csrf_exempt
 @login_required
 def save_stock_order(request):
-    if request.method == 'POST':
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+    try:
         data = json.loads(request.body.decode())
-        manufacturer = data.get('manufacturer')
-        order_date = data.get('order_date')
-        items = data.get('items', [])
+    except (TypeError, ValueError):
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+
+    manufacturer = (data.get('manufacturer') or '').strip()
+    order_date = data.get('order_date')
+    location = (data.get('location') or '').strip()
+    items = data.get('items', [])
+    order_id = data.get('order_id')
+
+    if not manufacturer or not order_date or not isinstance(items, list):
+        return JsonResponse({'status': 'error', 'message': 'Manufacturer, date, and items are required'}, status=400)
+
+    if order_id:
+        order = get_object_or_404(StockOrder, pk=order_id)
+        order.manufacturer = manufacturer
+        order.order_date = order_date
+        order.location = location
+        order.save(update_fields=['manufacturer', 'order_date', 'location'])
+        order.items.all().delete()
+    else:
         order = StockOrder.objects.create(
             manufacturer=manufacturer,
+            location=location,
             order_date=order_date,
             created_by=request.user if request.user.is_authenticated else None
         )
-        for item in items:
-            StockOrderItem.objects.create(
-                order=order,
-                kulfi_name=item.get('name'),
-                lot=item.get('lot', 0),
-                quantity=item.get('qty', 0)
-            )
-        return JsonResponse({'status': 'success'})
-    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+    for item in items:
+        StockOrderItem.objects.create(
+            order=order,
+            kulfi_name=item.get('name'),
+            lot=item.get('lot', 0) or 0,
+            quantity=item.get('qty', 0) or 0
+        )
+    return JsonResponse({'status': 'success', 'order_id': order.id})
+
+
+@csrf_exempt
+@login_required
+def delete_stock_order(request, order_id):
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+    order = get_object_or_404(StockOrder, pk=order_id)
+    order.delete()
+    return JsonResponse({'status': 'success'})
+
+
 from django.views.decorators.http import require_POST
 from django.core.mail import send_mail
 import json
@@ -1663,10 +1697,23 @@ def stock_order(request):
             }
             for product in _get_products_for_manufacturer(manufacturer, include_inactive=True)
         ]
+    saved_orders = []
+    for order in StockOrder.objects.prefetch_related('items').order_by('-order_date', '-created_at')[:50]:
+        saved_orders.append({
+            'id': order.id,
+            'manufacturer': order.manufacturer,
+            'location': order.location,
+            'order_date': order.order_date.isoformat(),
+            'items': [
+                {'name': item.kulfi_name, 'lot': item.lot, 'qty': item.quantity}
+                for item in order.items.all()
+            ],
+        })
     return render(request, 'inventory/stock_order.html', {
         'today': today,
         'manufacturers': manufacturers,
         'manufacturer_products_json': json.dumps(manufacturer_products),
+        'saved_orders_json': json.dumps(saved_orders),
     })
 
 # ==================== SALES MODULE ====================

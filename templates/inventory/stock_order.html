@@ -138,6 +138,10 @@
                 {% endfor %}
             </select>
         </div>
+        <div class="col-md-4">
+            <label class="form-label mb-1" for="customerLocation">Customer location</label>
+            <input type="text" id="customerLocation" class="form-control" maxlength="100" placeholder="Enter customer location">
+        </div>
     </div>
 </div>
 
@@ -175,6 +179,7 @@
                     '<div style="text-align:center;margin-bottom:10px;">'
                     + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
                     + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + '<div style="font-size:10pt;color:#555;">Customer location: ' + (d.location || '-') + '</div>'
                     + '</div>'
                     + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
                     + '<thead><tr>'
@@ -218,6 +223,7 @@
                     },
                     body: JSON.stringify({
                         manufacturer: d.mfgLabel,
+                        location: d.location,
                         order_date: d.date,
                         items: d.rows
                     })
@@ -254,6 +260,9 @@
     </button>
     <button class="btn btn-outline-secondary btn-icon" onclick="resetForm()" title="Reset form">
         <i class="fas fa-undo"></i> Reset
+    </button>
+    <button class="btn btn-primary btn-icon" onclick="saveOrder()" title="Save stock order">
+        <i class="fas fa-save"></i> <span id="saveOrderLabel">Save order</span>
     </button>
 </div>
 
@@ -295,13 +304,14 @@
         <h5 class="mb-0"><i class="fas fa-history"></i> Stock Order History</h5>
     </div>
     <div class="card-body">
-        <!-- Placeholder for previous order details. Replace with dynamic content as needed. -->
-        <p class="text-muted">Previous stock order details will appear here.</p>
+        <div id="orderHistory"></div>
     </div>
 </div>
 
 <script>
     const manufacturerProducts = {{ manufacturer_products_json|safe }};
+    const savedOrders = {{ saved_orders_json|safe }};
+    let editingOrderId = null;
 
     function getProducts(manufacturerName) {
         return manufacturerProducts[manufacturerName] || [];
@@ -412,7 +422,85 @@
     function resetForm() {
         document.getElementById('manufacturerSelect').value = '';
         document.getElementById('orderDate').value = '{{ today }}';
+        document.getElementById('customerLocation').value = '';
+        editingOrderId = null;
+        document.getElementById('saveOrderLabel').textContent = 'Save order';
         showManufacturer('');
+    }
+
+    function saveOrder() {
+        const d = getOrderData();
+        const location = document.getElementById('customerLocation').value.trim();
+        fetch("{% url 'save_stock_order' %}", {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({
+                order_id: editingOrderId,
+                manufacturer: d.mfgLabel,
+                location: location,
+                order_date: d.date,
+                items: d.rows.filter(function(row) { return row.lot !== '' && row.lot !== 0; })
+            })
+        }).then(function(response) { return response.json(); }).then(function(data) {
+            if (data.status !== 'success') {
+                alert(data.message || 'Unable to save order.');
+                return;
+            }
+            window.location.reload();
+        }).catch(function() { alert('Unable to save order.'); });
+    }
+
+    function editOrder(orderId) {
+        const order = savedOrders.find(function(item) { return item.id === orderId; });
+        if (!order) return;
+        editingOrderId = order.id;
+        document.getElementById('manufacturerSelect').value = order.manufacturer;
+        document.getElementById('orderDate').value = order.order_date;
+        document.getElementById('customerLocation').value = order.location || '';
+        showManufacturer(order.manufacturer);
+        order.items.forEach(function(item) {
+            const products = getProducts(order.manufacturer);
+            const index = products.findIndex(function(product) { return product.name === item.name; });
+            const input = document.getElementById('lot_' + index);
+            if (input) input.value = item.lot;
+        });
+        document.querySelectorAll('#stockOrderBody .lot-input').forEach(recalcRow);
+        recalcFooter();
+        document.getElementById('saveOrderLabel').textContent = 'Update order';
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
+    function deleteOrder(orderId) {
+        if (!confirm('Delete this saved stock order?')) return;
+        fetch("{% url 'delete_stock_order' 0 %}".replace('/0/', '/' + orderId + '/'), {
+            method: 'POST',
+            headers: {'X-CSRFToken': getCookie('csrftoken')}
+        }).then(function(response) { return response.json(); }).then(function(data) {
+            if (data.status !== 'success') {
+                alert(data.message || 'Unable to delete order.');
+                return;
+            }
+            window.location.reload();
+        }).catch(function() { alert('Unable to delete order.'); });
+    }
+
+    function renderOrderHistory() {
+        const history = document.getElementById('orderHistory');
+        if (!savedOrders.length) {
+            history.innerHTML = '<p class="text-muted mb-0">No saved stock orders yet.</p>';
+            return;
+        }
+        history.innerHTML = savedOrders.map(function(order) {
+            const itemCount = order.items.filter(function(item) { return item.qty > 0; }).length;
+            return '<div class="d-flex justify-content-between align-items-center border-bottom py-2 gap-2">' +
+                '<span><strong>' + order.order_date + '</strong> - ' + order.manufacturer +
+                (order.location ? ' - ' + order.location : '') + ' <small class="text-muted">(' + itemCount + ' products)</small></span>' +
+                '<span class="text-nowrap">' +
+                '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="editOrder(' + order.id + ')"><i class="fas fa-edit"></i> Edit</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteOrder(' + order.id + ')"><i class="fas fa-trash"></i> Delete</button>' +
+                '</span>' +
+                '</div>';
+        }).join('');
     }
 
     /* ── Collect current order rows as plain data ── */
@@ -421,6 +509,7 @@
         const lotLabel = quantityLabelForManufacturer(manufacturer);
         const mfgLabel = manufacturer;
         const date     = document.getElementById('orderDate').value;
+        const location = document.getElementById('customerLocation').value.trim();
         const products = getProducts(manufacturer);
 
         const rows = [];
@@ -436,11 +525,13 @@
         const totalQtyEl = document.getElementById('totalQty');
 
         return {
-            mfgLabel, lotLabel, date, rows,
+            mfgLabel, lotLabel, date, location, rows,
             totalLot: totalLotEl ? totalLotEl.textContent : '0',
             totalQty: totalQtyEl ? totalQtyEl.textContent : '0',
         };
     }
+
+    renderOrderHistory();
 
     /* ── Print / Save as PDF in a clean popup ── */
     function openPrintWindow() {
@@ -474,6 +565,7 @@
             + '<div class="hdr">'
             + '<h2>Stock Order</h2>'
             + '<p>Date: ' + d.date + '</p>'
+            + '<p>Customer location: ' + (d.location || '-') + '</p>'
             + '</div>'
             + '<table>'
             + '<thead><tr><th>S.No.</th><th>Kulfi Name</th><th>' + d.lotLabel + '</th><th>Quantity</th></tr></thead>'
@@ -534,6 +626,7 @@
             '<div style="text-align:center;margin-bottom:10px;">'
             + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
             + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+            + '<div style="font-size:10pt;color:#555;">Customer location: ' + (d.location || '-') + '</div>'
             + '</div>'
             + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
             + '<thead><tr>'
