@@ -192,7 +192,7 @@
         <div class="summary">
             <div class="summary-item">
                 <div class="label">Total Products</div>
-                <div class="value">{{ products|length }}</div>
+                <div class="value">{{ total_products }}</div>
             </div>
             <div class="summary-item">
                 <div class="label">Total Stock</div>
@@ -208,28 +208,23 @@
             </div>
         </div>
 
+        {% if view_mode == 'merged' %}
         <table>
             <thead>
                 <tr>
                     <th>Product Name</th>
-                    <th>SKU</th>
-                    <th>Category</th>
                     <th class="text-center">Stock</th>
                     <th class="text-center">Reorder Level</th>
-                    <th class="text-right">Cost Price</th>
                     <th class="text-right">Selling Price</th>
                     <th class="text-center">Status</th>
                 </tr>
             </thead>
             <tbody>
-                {% for product in products %}
+                {% for product in merged_products %}
                 <tr>
                     <td>{{ product.name }}</td>
-                    <td>{{ product.sku }}</td>
-                    <td>{{ product.category }}</td>
-                    <td class="text-center">{{ product.display_stock|default:product.current_stock }}</td>
+                    <td class="text-center">{{ product.display_stock }}</td>
                     <td class="text-center">{{ product.reorder_level }}</td>
-                    <td class="text-right">₹{{ product.cost_price|floatformat:2 }}</td>
                     <td class="text-right">₹{{ product.selling_price|floatformat:2 }}</td>
                     <td class="text-center">
                         {% if product.display_stock|default:product.current_stock <= product.reorder_level %}
@@ -239,13 +234,40 @@
                         {% endif %}
                     </td>
                 </tr>
+                <tr>
+                    <td colspan="5">
+                        <strong>Manufacturer breakdown:</strong>
+                        {% for item in product.breakdown %}{{ item.manufacturer_name }}: {{ item.display_stock }}{% if not forloop.last %}; {% endif %}{% endfor %}
+                    </td>
+                </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="8" class="text-center">No products found for current filters</td>
+                    <td colspan="5" class="text-center">No products found for current filters</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Product Name</th><th>SKU</th><th>Category</th>
+                    <th class="text-center">Stock</th><th class="text-center">Reorder Level</th>
+                    <th class="text-right">Cost Price</th><th class="text-right">Selling Price</th><th class="text-center">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td>{{ product.name }}</td><td>{{ product.sku }}</td><td>{{ product.category }}</td>
+                    <td class="text-center">{{ product.display_stock|default:product.current_stock }}</td><td class="text-center">{{ product.reorder_level }}</td>
+                    <td class="text-right">₹{{ product.cost_price|floatformat:2 }}</td><td class="text-right">₹{{ product.selling_price|floatformat:2 }}</td>
+                    <td class="text-center">{% if product.display_stock <= product.reorder_level %}<span class="low-stock">Low Stock</span>{% else %}<span class="in-stock">In Stock</span>{% endif %}</td>
+                </tr>
+                {% empty %}<tr><td colspan="8" class="text-center">No products found for current filters</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
 
         <div class="footer">
             Indian Kulfi Inventory System

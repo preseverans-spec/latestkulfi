@@ -855,6 +855,7 @@ def inventory_list(request):
             product.display_stock = max(0, stock_map.get(product.id, 0))
         else:
             product.display_stock = max(0, product.current_stock)
+        product.manufacturer_name = product.manufacturer.name if product.manufacturer else '-'
         # Remove 'KC' from product name for display
         if 'KC' in product.name:
             product.name = product.name.replace('KC', '').strip()
@@ -966,7 +967,10 @@ def inventory_list(request):
             display_rows.sort(key=lambda row: row.get(merged_sort_attr, row['name']), reverse=reverse_sort)
     else:
         if sort_attr == 'sku' and not reverse_sort:
-            product_list.sort(key=lambda p: _sku_pos.get(p.sku, len(_KULFI_SKU_ORDER)))
+            product_list.sort(key=lambda p: (
+                (p.manufacturer_name or '-').casefold(),
+                get_daily_sales_product_sort_key(p.name, p.sku),
+            ))
         else:
             product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
         display_rows = product_list
@@ -1014,6 +1018,9 @@ def _build_inventory_export_context(request):
     movement_filter = request.GET.get('movement_type', '')
     as_of_date = request.GET.get('as_of_date', '')
     sort_by = request.GET.get('sort', 'sku')
+    view_mode = request.GET.get('view_mode', 'individual')
+    if view_mode not in ('individual', 'merged'):
+        view_mode = 'individual'
 
     selected_date = None
     if as_of_date:
@@ -1111,6 +1118,24 @@ def _build_inventory_export_context(request):
     else:
         product_list.sort(key=lambda product: getattr(product, sort_attr), reverse=reverse_sort)
 
+    merged_products = []
+    if view_mode == 'merged':
+        merged_groups = defaultdict(list)
+        for product in product_list:
+            merged_groups[normalize_sales_product_name(product.name).lower()].append(product)
+        for items in merged_groups.values():
+            merged_products.append({
+                'name': normalize_sales_product_name(items[0].name),
+                'display_stock': sum(item.display_stock for item in items),
+                'reorder_level': sum(item.reorder_level for item in items),
+                'selling_price': sum(item.selling_price for item in items) / len(items),
+                'breakdown': items,
+            })
+        if sort_attr == 'sku' and not reverse_sort:
+            merged_products.sort(key=lambda row: get_daily_sales_product_sort_key(row['name']))
+        else:
+            merged_products.sort(key=lambda row: row.get(sort_attr, row['name']), reverse=reverse_sort)
+
     total_stock = 0
     total_cost_price = Decimal('0.0')
     total_sales_price = Decimal('0.0')
@@ -1131,6 +1156,9 @@ def _build_inventory_export_context(request):
         'status_filter': status_filter,
         'movement_filter': movement_filter,
         'sort_by': sort_by,
+        'view_mode': view_mode,
+        'merged_products': merged_products,
+        'total_products': len(merged_products) if view_mode == 'merged' else len(product_list),
         'total_stock': total_stock,
         'total_cost_price': total_cost_price,
         'total_sales_price': total_sales_price,
@@ -1183,25 +1211,35 @@ def print_inventory_pdf(request):
         ))
         elements.append(Spacer(1, 0.15 * inch))
 
-        data = [['Product', 'SKU', 'Category', 'Stock', 'Reorder', 'Cost Price', 'Selling Price', 'Status']]
-        for product in context['products']:
-            stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
-            status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
-            display_name = product.name.replace('KC', '').strip() if 'KC' in product.name else product.name
-            data.append([
-                display_name,
-                product.sku,
-                'Indian Kulfi',
-                str(stock_value),
-                str(product.reorder_level),
-                f"Rs.{product.cost_price:.2f}",
-                f"Rs.{product.selling_price:.2f}",
-                status,
-            ])
+        if context['view_mode'] == 'merged':
+            data = [['Product', 'Stock', 'Reorder', 'Selling Price', 'Status']]
+            for product in context['merged_products']:
+                stock_value = product['display_stock']
+                status = 'Low Stock' if stock_value <= product['reorder_level'] else 'In Stock'
+                data.append([
+                    product['name'],
+                    str(stock_value),
+                    str(product['reorder_level']),
+                    f"Rs.{product['selling_price']:.2f}",
+                    status,
+                ])
+            col_widths = [3.0 * inch, 1.0 * inch, 1.0 * inch, 1.3 * inch, 1.0 * inch]
+        else:
+            data = [['Product', 'SKU', 'Category', 'Stock', 'Reorder', 'Cost Price', 'Selling Price', 'Status']]
+            for product in context['products']:
+                stock_value = max(0, getattr(product, 'display_stock', product.current_stock))
+                status = 'Low Stock' if stock_value <= product.reorder_level else 'In Stock'
+                display_name = product.name.replace('KC', '').strip() if 'KC' in product.name else product.name
+                data.append([
+                    display_name, product.sku, 'Indian Kulfi', str(stock_value),
+                    str(product.reorder_level), f"Rs.{product.cost_price:.2f}",
+                    f"Rs.{product.selling_price:.2f}", status,
+                ])
+            col_widths = [2.0 * inch, 1.0 * inch, 1.4 * inch, 0.8 * inch, 0.8 * inch, 1.0 * inch, 1.1 * inch, 0.9 * inch]
 
         table = Table(
             data,
-            colWidths=[2.0 * inch, 1.0 * inch, 1.4 * inch, 0.8 * inch, 0.8 * inch, 1.0 * inch, 1.1 * inch, 0.9 * inch],
+            colWidths=col_widths,
             repeatRows=1,
         )
         table.setStyle(TableStyle([

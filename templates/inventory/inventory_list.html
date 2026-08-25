@@ -116,6 +116,14 @@
         box-shadow: 0 0 10px rgba(13, 110, 253, 0.3);
     }
 
+    .merged-breakdown-row {
+        display: none;
+    }
+
+    .merged-breakdown-row.is-visible {
+        display: table-row;
+    }
+
     @media (max-width: 768px) {
         .table-responsive {
             font-size: 0.85rem;
@@ -293,7 +301,7 @@
                 <tr>
                     <td>
                         <strong>{{ product.name }}</strong>
-                        <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-bs-toggle="collapse" data-bs-target="#merged-breakdown-{{ forloop.counter }}" aria-expanded="false" title="Show manufacturer breakdown">
+                        <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-breakdown-target="merged-breakdown-{{ forloop.counter }}" aria-expanded="false" aria-controls="merged-breakdown-{{ forloop.counter }}" onclick="toggleMergedBreakdown(this)" title="Show manufacturer breakdown">
                             <i class="fas fa-chevron-down"></i> details
                         </button>
                     </td>
@@ -313,7 +321,7 @@
                         </a>
                     </td>
                 </tr>
-                <tr class="collapse" id="merged-breakdown-{{ forloop.counter }}">
+                <tr class="merged-breakdown-row" id="merged-breakdown-{{ forloop.counter }}">
                     <td colspan="6" class="p-0">
                         <table class="table table-sm mb-0">
                             <thead class="table-light">
@@ -440,7 +448,7 @@
         if (!table || !order || !order.length) return;
 
         const headerCells = Array.from(table.querySelectorAll('thead th'));
-        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const rows = Array.from(table.querySelectorAll(':scope > tbody > tr'));
 
         const currentOrder = headerCells.map(h => h.dataset.column);
         const targetOrder = order.filter(col => currentOrder.includes(col));
@@ -476,6 +484,10 @@
         const newBodyFragment = document.createDocumentFragment();
 
         rows.forEach(row => {
+            if (row.classList.contains('merged-breakdown-row')) {
+                newBodyFragment.appendChild(row);
+                return;
+            }
             const cells = Array.from(row.children);
             const newRow = reorderRow(cells, targetOrder);
             newBodyFragment.appendChild(newRow);
@@ -519,8 +531,8 @@
 
                 const table = document.querySelector('.table');
                 const allRows = [
-                    ...table.querySelectorAll('thead tr'),
-                    ...table.querySelectorAll('tbody tr')
+                    ...table.querySelectorAll(':scope > thead > tr'),
+                    ...table.querySelectorAll(':scope > tbody > tr')
                 ];
 
                 allRows.forEach(row => {
@@ -548,6 +560,19 @@
         if (dateElement) {
             const d = new Date();
             dateElement.textContent = d.toLocaleString();
+        }
+    }
+
+    function toggleMergedBreakdown(button) {
+        const breakdown = document.getElementById(button.dataset.breakdownTarget);
+        if (!breakdown) return;
+
+        const isVisible = breakdown.classList.toggle('is-visible');
+        button.setAttribute('aria-expanded', String(isVisible));
+        const icon = button.querySelector('.fas');
+        if (icon) {
+            icon.classList.toggle('fa-chevron-down', !isVisible);
+            icon.classList.toggle('fa-chevron-up', isVisible);
         }
     }
 

@@ -119,6 +119,60 @@ class SyncApiTests(TestCase):
 		self.assertEqual(response.status_code, 302)
 		self.assertEqual(response.url, f"{reverse('product_list')}?manufacturer={manufacturer.id}")
 
+	def test_inventory_by_manufacturer_sorts_manufacturers_alphabetically(self):
+		astar = Manufacturer.objects.create(name='AStar', code='AST')
+		new_bowring, _ = Manufacturer.objects.get_or_create(name='New Bowring', defaults={'code': 'NB'})
+		for manufacturer, name, sku in (
+			(new_bowring, 'Black Currant', 'NB001'),
+			(new_bowring, 'Malai', 'NB002'),
+			(astar, 'AStar Kulfi', 'AST001'),
+		):
+			Product.objects.create(
+				name=name,
+				sku=sku,
+				manufacturer=manufacturer,
+				category='Indian Kulfi',
+				cost_price='10.00',
+				selling_price='20.00',
+				current_stock=1,
+				reorder_level=0,
+				is_active=True,
+			)
+
+		admin = User.objects.create_user(username='inventory-sort', password='pass12345', is_staff=True)
+		self.client.force_login(admin)
+		response = self.client.get(reverse('inventory_list'), {'view_mode': 'individual', 'per_page': 50})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(
+			[
+				product.manufacturer_name
+				for product in response.context['products']
+				if product.name in {'AStar Kulfi', 'Black Currant', 'Malai'}
+			],
+			['AStar', 'New Bowring', 'New Bowring'],
+		)
+		self.assertEqual(
+			[product.name for product in response.context['products'] if product.manufacturer_name == 'New Bowring'],
+			['Malai', 'Black Currant'],
+		)
+
+		merged_response = self.client.get(reverse('inventory_list'), {'view_mode': 'merged', 'per_page': 50})
+		self.assertContains(merged_response, 'data-breakdown-target="merged-breakdown-')
+		self.assertContains(merged_response, 'New Bowring')
+
+		print_response = self.client.get(
+			reverse('print_inventory_html'),
+			{'view_mode': 'merged', 'per_page': 50},
+		)
+		self.assertEqual(print_response.status_code, 200)
+		self.assertContains(print_response, 'Manufacturer breakdown:')
+		self.assertNotContains(print_response, 'New Bowring Kulfi')
+
+		pdf_response = self.client.get(reverse('print_inventory_pdf'), {'view_mode': 'merged'})
+		self.assertEqual(pdf_response.status_code, 200)
+		self.assertEqual(pdf_response['Content-Type'], 'application/pdf')
+
 	def test_sync_push_create_sales_idempotent(self):
 		self.authenticate(self.sales_user)
 		payload = {
