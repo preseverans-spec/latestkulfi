@@ -182,13 +182,14 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         quantityInput.addEventListener('focus', function() {
-            if (quantityInput.value === '0') {
+            if (parseFloat(quantityInput.value) === 0 || quantityInput.value.trim() === '') {
                 quantityInput.value = '';
             }
+            quantityInput.select();
         });
 
         quantityInput.addEventListener('blur', function() {
-            if (quantityInput.value === '') {
+            if (quantityInput.value.trim() === '') {
                 quantityInput.value = '0';
             }
             updateTotal();
