@@ -3540,6 +3540,7 @@ def _build_daily_report_context(selected_date):
         key=lambda item: get_report_product_sort_key(item['product_name'])
     )
 
+    total_quantity = sum(item['quantity'] for item in sales)
     total_revenue = sales_qs.aggregate(
         total=Coalesce(Sum('total_price'), 0, output_field=DecimalField())
     )['total']
@@ -3548,7 +3549,11 @@ def _build_daily_report_context(selected_date):
     total_operation_cost = OperationsExpense.objects.filter(operation_date=selected_date).aggregate(
         total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
     )['total']
-    net_profit = total_profit - total_operation_cost
+    total_operation_income = OperationsIncome.objects.filter(income_date=selected_date).aggregate(
+        total=Coalesce(Sum('amount'), 0, output_field=DecimalField())
+    )['total']
+    revenue_minus_operation_cost = total_revenue - total_operation_cost
+    net_profit = total_profit - total_operation_cost + total_operation_income
 
     # Calculate total stock as of selected date
     products = Product.objects.filter(is_active=True)
@@ -3560,8 +3565,12 @@ def _build_daily_report_context(selected_date):
         'sales': sales,
         'total_revenue': total_revenue,
         'total_cost': total_cost,
+        'total_cogs': total_cost,
         'total_profit': total_profit,
+        'total_quantity': total_quantity,
         'total_operation_cost': total_operation_cost,
+        'total_operation_income': total_operation_income,
+        'revenue_minus_operation_cost': revenue_minus_operation_cost,
         'net_profit': net_profit,
         'total_transactions': len(sales),
         'total_stock': total_stock,
@@ -3741,6 +3750,7 @@ def _build_profit_report_context(start_date, end_date):
     total_quantity = sales.aggregate(
         total=Coalesce(Sum('quantity'), 0, output_field=DecimalField())
     )['total']
+    profit_margin = (total_profit / total_revenue * 100) if total_revenue else Decimal('0.0')
 
     return {
         'start_date': start_date,
@@ -3749,6 +3759,7 @@ def _build_profit_report_context(start_date, end_date):
         'total_cost': total_cost,
         'total_profit': total_profit,
         'total_quantity': total_quantity,
+        'profit_margin': profit_margin,
         'products_profit': sorted_products,
     }
 
@@ -4333,18 +4344,22 @@ def print_stock_report_pdf(request):
                 ])
             col_widths = [1.05 * inch, 1.0 * inch, 1.0 * inch, 1.4 * inch, 1.25 * inch]
         else:
-            data = [['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In']]
+            data = [['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In', 'Unit Cost', 'Total Cost', 'Recorded By']]
             for row in context['movement_rows']:
                 movement = row['movement']
+                recorded_by = movement.created_by.get_full_name() or movement.created_by.username if movement.created_by else '-'
                 data.append([
                     movement.movement_date.strftime('%Y-%m-%d'),
                     row['resolved_manufacturer'],
                     row['entry_type'],
-                    movement.product.sku,
+                    movement.product.sku or '',
                     movement.product.name,
                     str(row['qty_in']),
+                    f"Rs.{row['unit_cost']:.2f}",
+                    f"Rs.{row['total_cost']:.2f}",
+                    recorded_by,
                 ])
-            col_widths = [0.95 * inch, 1.0 * inch, 1.1 * inch, 0.9 * inch, 2.0 * inch, 0.7 * inch]
+            col_widths = [0.8 * inch, 0.85 * inch, 0.9 * inch, 0.65 * inch, 1.4 * inch, 0.45 * inch, 0.7 * inch, 0.75 * inch, 0.8 * inch]
 
         table = Table(data, colWidths=col_widths)
         table.setStyle(TableStyle([
@@ -4426,8 +4441,10 @@ def print_stock_report_excel(request):
         ws.column_dimensions['C'].width = 18
         ws.column_dimensions['D'].width = 14
         ws.column_dimensions['E'].width = 26
-        ws.column_dimensions['F'].width = 14
-        ws.column_dimensions['G'].width = 18
+        ws.column_dimensions['F'].width = 12
+        ws.column_dimensions['G'].width = 14
+        ws.column_dimensions['H'].width = 14
+        ws.column_dimensions['I'].width = 20
 
         ws['A1'] = f"STOCK REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
@@ -4444,7 +4461,7 @@ def print_stock_report_excel(request):
         if report_mode == 'general':
             headers = ['Stock In Date', 'Total Packs', 'Total Quantity', 'Overall Cost Price', 'Manufacturer']
         else:
-            headers = ['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In']
+            headers = ['Date', 'Manufacturer', 'Entry Type', 'SKU', 'Product', 'Qty In', 'Unit Cost', 'Total Cost', 'Recorded By']
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=header_row, column=col)
             cell.value = header
@@ -4464,10 +4481,17 @@ def print_stock_report_excel(request):
         else:
             for row in context['movement_rows']:
                 movement = row['movement']
+                recorded_by = movement.created_by.get_full_name() or movement.created_by.username if movement.created_by else '-'
                 ws.cell(row=row_number, column=1).value = movement.movement_date.strftime('%Y-%m-%d')
                 ws.cell(row=row_number, column=2).value = row['resolved_manufacturer']
                 ws.cell(row=row_number, column=3).value = row['entry_type']
-                ws.cell(row=row_number, column=4).value = movement.product.sku
+                ws.cell(row=row_number, column=4).value = movement.product.sku or ''
+                ws.cell(row=row_number, column=5).value = movement.product.name
+                ws.cell(row=row_number, column=6).value = int(row['qty_in'])
+                ws.cell(row=row_number, column=7).value = float(row['unit_cost'])
+                ws.cell(row=row_number, column=8).value = float(row['total_cost'])
+                ws.cell(row=row_number, column=9).value = recorded_by
+                row_number += 1
                 ws.cell(row=row_number, column=5).value = movement.product.name
                 ws.cell(row=row_number, column=6).value = int(row['qty_in'])
                 row_number += 1
@@ -4533,17 +4557,20 @@ def print_daily_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Stock Taken:</b> {context['total_combined_stock_taken']} | "
+            f"<b>Total Stock:</b> {context['total_stock']}<br/>"
+            f"<b>Total Quantity Sold:</b> {context['total_quantity']} | "
             f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
-            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
-            f"<b>Profit:</b> Rs.{context['total_profit']:.2f} | "
-            f"<b>Operation Cost:</b> Rs.{context['total_operation_cost']:.2f} | "
+            f"<b>COGS:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Operation Cost:</b> Rs.{context['total_operation_cost']:.2f}<br/>"
+            f"<b>Operation Income:</b> Rs.{context['total_operation_income']:.2f} | "
+            f"<b>Revenue - Op Cost:</b> Rs.{context['revenue_minus_operation_cost']:.2f} | "
             f"<b>Net Profit:</b> Rs.{context['net_profit']:.2f}"
         )
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
 
-        data = [['Product', 'Qty', 'Unit Price', 'Revenue', 'Cost', 'Profit']]
+        data = [['Product', 'Qty', 'Unit Price', 'Revenue', 'Cost', 'Profit', 'Recorded By']]
         for item in context['sales']:
             data.append([
                 item['product_name'],
@@ -4552,18 +4579,20 @@ def print_daily_report_pdf(request):
                 f"Rs.{item['revenue']:.2f}",
                 f"Rs.{item['cost']:.2f}",
                 f"Rs.{item['profit']:.2f}",
+                str(item['recorded_by']),
             ])
 
         data.append([
             'TOTAL',
-            '',
+            str(context['total_quantity']),
             '',
             f"Rs.{context['total_revenue']:.2f}",
             f"Rs.{context['total_cost']:.2f}",
             f"Rs.{context['total_profit']:.2f}",
+            '',
         ])
 
-        table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch])
+        table = Table(data, colWidths=[1.8 * inch, 0.5 * inch, 0.8 * inch, 0.9 * inch, 0.8 * inch, 0.8 * inch, 1.2 * inch])
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -4610,26 +4639,30 @@ def print_daily_report_excel(request):
         ws.column_dimensions['D'].width = 14
         ws.column_dimensions['E'].width = 14
         ws.column_dimensions['F'].width = 14
+        ws.column_dimensions['G'].width = 20
 
         ws['A1'] = f"DAILY REPORT - {selected_date.strftime('%d %B %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
 
-        ws['A3'] = f"Transactions: {context['total_transactions']}"
-        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
-        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
-        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
-        ws['A7'] = f"Operation Cost: {context['total_operation_cost']:.2f}"
-        ws['A8'] = f"Net Profit: {context['net_profit']:.2f}"
+        ws['A3'] = f"Stock Taken for Date: {context['total_combined_stock_taken']}"
+        ws['A4'] = f"Total Stock as of Date: {context['total_stock']}"
+        ws['A5'] = f"Total Quantity Sold: {context['total_quantity']}"
+        ws['A6'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A7'] = f"COGS: {context['total_cost']:.2f}"
+        ws['A8'] = f"Operation Cost: {context['total_operation_cost']:.2f}"
+        ws['A9'] = f"Operation Income: {context['total_operation_income']:.2f}"
+        ws['A10'] = f"Revenue - Op Cost: {context['revenue_minus_operation_cost']:.2f}"
+        ws['A11'] = f"Net Profit: {context['net_profit']:.2f}"
 
-        headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit']
+        headers = ['Product', 'Quantity', 'Unit Price', 'Revenue', 'Cost', 'Profit', 'Recorded By']
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=10, column=col)
+            cell = ws.cell(row=13, column=col)
             cell.value = header
             cell.font = Font(bold=True, color='FFFFFF')
             cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
             cell.alignment = Alignment(horizontal='center')
 
-        row = 11
+        row = 14
         for item in context['sales']:
             ws.cell(row=row, column=1).value = item['product_name']
             ws.cell(row=row, column=2).value = int(item['quantity'])
@@ -4637,13 +4670,16 @@ def print_daily_report_excel(request):
             ws.cell(row=row, column=4).value = float(item['revenue'])
             ws.cell(row=row, column=5).value = float(item['cost'])
             ws.cell(row=row, column=6).value = float(item['profit'])
+            ws.cell(row=row, column=7).value = item['recorded_by']
             row += 1
 
         ws.cell(row=row, column=1).value = 'TOTAL'
+        ws.cell(row=row, column=2).value = int(context['total_quantity'])
         ws.cell(row=row, column=4).value = float(context['total_revenue'])
         ws.cell(row=row, column=5).value = float(context['total_cost'])
         ws.cell(row=row, column=6).value = float(context['total_profit'])
-        for col in range(1, 7):
+        for col in range(1, 8):
+            ws.cell(row=row, column=col).font = Font(bold=True)
             ws.cell(row=row, column=col).font = Font(bold=True)
 
         response = HttpResponse(
@@ -4730,28 +4766,33 @@ def print_weekly_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
-            f"<b>Transactions:</b> {context['total_transactions']} | "
+            f"<b>Total Quantity Sold:</b> {context['total_quantity']} | "
             f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
-            f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
-            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
+            f"<b>COGS:</b> Rs.{context['total_cost']:.2f} | "
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}<br/>"
+            f"<b>Total Operation Cost:</b> Rs.{context['total_operation_cost']:.2f} | "
+            f"<b>Total Operation Income:</b> Rs.{context['total_operation_income']:.2f} | "
+            f"<b>Total Net Profit:</b> Rs.{context['total_net_profit']:.2f}"
         )
         if selected_salesperson is not None:
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
-            summary = f"{summary} | <b>Salesperson:</b> {salesperson_name}"
+            summary = f"{summary}<br/><b>Salesperson:</b> {salesperson_name}"
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
 
         elements.append(Paragraph('<b>Daily Breakdown</b>', styles['Heading3']))
-        daily_data = [['Date', 'Transactions', 'Quantity Sold', 'Revenue']]
+        daily_data = [['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Op Cost', 'Net Profit']]
         for day, row in context['daily_data'].items():
             daily_data.append([
                 day,
-                str(row['count']),
                 f"{Decimal(row['quantity']):.0f}",
                 f"Rs.{row['revenue']:.2f}",
+                f"Rs.{row['cogs']:.2f}",
+                f"Rs.{row['operation_cost']:.2f}",
+                f"Rs.{row['net_profit']:.2f}",
             ])
 
-        daily_table = Table(daily_data, colWidths=[1.6 * inch, 1.0 * inch, 1.2 * inch, 1.3 * inch])
+        daily_table = Table(daily_data, colWidths=[1.2 * inch, 0.9 * inch, 1.1 * inch, 1.0 * inch, 1.0 * inch, 1.1 * inch])
         daily_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -4838,16 +4879,19 @@ def print_weekly_report_excel(request):
             salesperson_name = selected_salesperson.get_full_name() or selected_salesperson.username
             ws['A2'] = f"Salesperson: {salesperson_name}"
 
-        ws['A3'] = f"Transactions: {context['total_transactions']}"
+        ws['A3'] = f"Total Quantity Sold: {context['total_quantity']}"
         ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
-        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A5'] = f"COGS: {context['total_cost']:.2f}"
         ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+        ws['A7'] = f"Total Operation Cost: {context['total_operation_cost']:.2f}"
+        ws['A8'] = f"Total Operation Income: {context['total_operation_income']:.2f}"
+        ws['A9'] = f"Total Net Profit: {context['total_net_profit']:.2f}"
 
-        ws['A8'] = 'Daily Breakdown'
-        ws['A8'].font = Font(bold=True)
+        ws['A11'] = 'Daily Breakdown'
+        ws['A11'].font = Font(bold=True)
 
-        daily_headers = ['Date', 'Transactions', 'Quantity Sold', 'Revenue']
-        daily_header_row = 9
+        daily_headers = ['Date', 'Quantity Sold', 'Revenue', 'COGS', 'Operation Cost', 'Net Profit']
+        daily_header_row = 12
         for col, header in enumerate(daily_headers, 1):
             cell = ws.cell(row=daily_header_row, column=col)
             cell.value = header
@@ -4858,9 +4902,11 @@ def print_weekly_report_excel(request):
         row = daily_header_row + 1
         for day, data in context['daily_data'].items():
             ws.cell(row=row, column=1).value = day
-            ws.cell(row=row, column=2).value = int(data['count'])
-            ws.cell(row=row, column=3).value = int(data['quantity'])
-            ws.cell(row=row, column=4).value = float(data['revenue'])
+            ws.cell(row=row, column=2).value = int(data['quantity'])
+            ws.cell(row=row, column=3).value = float(data['revenue'])
+            ws.cell(row=row, column=4).value = float(data['cogs'])
+            ws.cell(row=row, column=5).value = float(data['operation_cost'])
+            ws.cell(row=row, column=6).value = float(data['net_profit'])
             row += 1
 
         row += 1
@@ -4966,9 +5012,11 @@ def print_profit_report_pdf(request):
         elements.append(Spacer(1, 0.25 * inch))
 
         summary = (
+            f"<b>Total Quantity Sold:</b> {context['total_quantity']} | "
             f"<b>Revenue:</b> Rs.{context['total_revenue']:.2f} | "
             f"<b>Cost:</b> Rs.{context['total_cost']:.2f} | "
-            f"<b>Profit:</b> Rs.{context['total_profit']:.2f}"
+            f"<b>Profit:</b> Rs.{context['total_profit']:.2f} | "
+            f"<b>Profit Margin:</b> {context['profit_margin']:.2f}%"
         )
         elements.append(Paragraph(summary, styles['Normal']))
         elements.append(Spacer(1, 0.2 * inch))
@@ -4984,11 +5032,22 @@ def print_profit_report_pdf(request):
                 f"{item['margin']:.2f}%",
             ])
 
+        data.append([
+            'TOTAL',
+            str(context['total_quantity']),
+            f"Rs.{context['total_revenue']:.2f}",
+            f"Rs.{context['total_cost']:.2f}",
+            f"Rs.{context['total_profit']:.2f}",
+            '—',
+        ])
+
         table = Table(data, colWidths=[2.2 * inch, 0.7 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 0.8 * inch])
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('FONTSIZE', (0, 0), (-1, -1), 8),
@@ -5041,19 +5100,21 @@ def print_profit_report_excel(request):
         ws['A1'] = f"PROFIT REPORT - {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
         ws['A1'].font = Font(bold=True, size=14)
 
-        ws['A3'] = f"Revenue: {context['total_revenue']:.2f}"
-        ws['A4'] = f"Cost: {context['total_cost']:.2f}"
-        ws['A5'] = f"Profit: {context['total_profit']:.2f}"
+        ws['A3'] = f"Total Quantity Sold: {context['total_quantity']}"
+        ws['A4'] = f"Revenue: {context['total_revenue']:.2f}"
+        ws['A5'] = f"Cost: {context['total_cost']:.2f}"
+        ws['A6'] = f"Profit: {context['total_profit']:.2f}"
+        ws['A7'] = f"Profit Margin: {context['profit_margin']:.2f}%"
 
         headers = ['Product', 'Quantity', 'Revenue', 'Cost', 'Profit', 'Margin %']
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=7, column=col)
+            cell = ws.cell(row=9, column=col)
             cell.value = header
             cell.font = Font(bold=True, color='FFFFFF')
             cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
             cell.alignment = Alignment(horizontal='center')
 
-        row = 8
+        row = 10
         for product_name, item in context['products_profit']:
             ws.cell(row=row, column=1).value = product_name
             ws.cell(row=row, column=2).value = int(item['quantity'])
@@ -5062,6 +5123,14 @@ def print_profit_report_excel(request):
             ws.cell(row=row, column=5).value = float(item['profit'])
             ws.cell(row=row, column=6).value = float(item['margin'])
             row += 1
+
+        ws.cell(row=row, column=1).value = 'TOTAL'
+        ws.cell(row=row, column=2).value = int(context['total_quantity'])
+        ws.cell(row=row, column=3).value = float(context['total_revenue'])
+        ws.cell(row=row, column=4).value = float(context['total_cost'])
+        ws.cell(row=row, column=5).value = float(context['total_profit'])
+        for col in range(1, 7):
+            ws.cell(row=row, column=col).font = Font(bold=True)
 
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -5165,12 +5234,12 @@ def print_income_statement_pdf(request):
         summary_lines = [
             ['Sales Revenue', f"Rs.{context['sales_revenue']:.2f}"],
             ['Cost of Goods Sold (COGS)', f"Rs.{context['cost_of_goods_sold']:.2f}"],
-            ['Gross Profit', f"Rs.{context['gross_profit']:.2f}"],
+            ['Gross Profit', f"Rs.{context['gross_profit']:.2f} (Margin: {context['gross_margin']:.2f}%)"],
             ['Other Operating Income', f"Rs.{context['operating_income_total']:.2f}"],
             ['Operating Expenses', f"Rs.{context['operating_expense_total']:.2f}"],
-            ['Net Profit (Before Tax)', f"Rs.{context['net_profit_before_tax']:.2f}"],
+            ['Net Profit (Before Tax)', f"Rs.{context['net_profit_before_tax']:.2f} (Margin: {context['net_margin']:.2f}%)"],
         ]
-        summary_table = Table(summary_lines, colWidths=[3.4 * inch, 2.0 * inch])
+        summary_table = Table(summary_lines, colWidths=[3.4 * inch, 2.4 * inch])
         summary_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('BACKGROUND', (0, 2), (-1, 2), colors.lightgrey),
@@ -5203,6 +5272,50 @@ def print_income_statement_pdf(request):
             ('FONTSIZE', (0, 0), (-1, -1), 8),
         ]))
         elements.append(table)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        elements.append(Paragraph('<b>Operating Income Entries</b>', styles['Heading3']))
+        inc_data = [['Date', 'Details', 'Amount']]
+        for income in context['operating_income_entries']:
+            inc_data.append([
+                income.income_date.strftime('%Y-%m-%d'),
+                income.details or '',
+                f"Rs.{income.amount:.2f}",
+            ])
+        if len(inc_data) == 1:
+            inc_data.append(['-', 'No operating income entries for this period', '-'])
+        inc_table = Table(inc_data, colWidths=[1.2 * inch, 3.4 * inch, 1.4 * inch])
+        inc_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(inc_table)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        elements.append(Paragraph('<b>Operating Expense Entries</b>', styles['Heading3']))
+        exp_data = [['Date', 'Details', 'Amount']]
+        for expense in context['operating_expense_entries']:
+            exp_data.append([
+                expense.operation_date.strftime('%Y-%m-%d'),
+                expense.details or '',
+                f"Rs.{expense.amount:.2f}",
+            ])
+        if len(exp_data) == 1:
+            exp_data.append(['-', 'No operating expense entries for this period', '-'])
+        exp_table = Table(exp_data, colWidths=[1.2 * inch, 3.4 * inch, 1.4 * inch])
+        exp_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(exp_table)
 
         doc.build(elements)
         return response
@@ -5264,34 +5377,78 @@ def print_income_statement_excel(request):
         ws['B4'] = float(context['cost_of_goods_sold'])
         ws['A5'] = 'Gross Profit'
         ws['B5'] = float(context['gross_profit'])
-        ws['A6'] = 'Other Operating Income'
-        ws['B6'] = float(context['operating_income_total'])
-        ws['A7'] = 'Operating Expenses'
-        ws['B7'] = float(context['operating_expense_total'])
-        ws['A8'] = 'Net Profit (Before Tax)'
-        ws['B8'] = float(context['net_profit_before_tax'])
+        ws['A6'] = 'Gross Margin'
+        ws['B6'] = f"{context['gross_margin']:.2f}%"
+        ws['A7'] = 'Other Operating Income'
+        ws['B7'] = float(context['operating_income_total'])
+        ws['A8'] = 'Operating Expenses'
+        ws['B8'] = float(context['operating_expense_total'])
+        ws['A9'] = 'Net Profit (Before Tax)'
+        ws['B9'] = float(context['net_profit_before_tax'])
+        ws['A10'] = 'Net Margin'
+        ws['B10'] = f"{context['net_margin']:.2f}%"
 
-        for cell_ref in ['A5', 'B5', 'A8', 'B8']:
+        for cell_ref in ['A5', 'B5', 'A9', 'B9']:
             ws[cell_ref].font = Font(bold=True)
 
-        ws['A10'] = 'Sales Breakdown (By Product)'
-        ws['A10'].font = Font(bold=True)
+        ws['A12'] = 'Sales Breakdown (By Product)'
+        ws['A12'].font = Font(bold=True)
 
         headers = ['Product', 'Qty Sold', 'Revenue', 'COGS', 'Gross Profit']
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=11, column=col)
+            cell = ws.cell(row=13, column=col)
             cell.value = header
             cell.font = Font(bold=True, color='FFFFFF')
             cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
             cell.alignment = Alignment(horizontal='center')
 
-        row_idx = 12
+        row_idx = 14
         for row in context['sales_breakdown']:
             ws.cell(row=row_idx, column=1).value = row['product_name']
             ws.cell(row=row_idx, column=2).value = int(row['quantity'])
             ws.cell(row=row_idx, column=3).value = float(row['revenue'])
             ws.cell(row=row_idx, column=4).value = float(row['cost'])
             ws.cell(row=row_idx, column=5).value = float(row['gross_profit'])
+            row_idx += 1
+
+        row_idx += 1
+        ws.cell(row=row_idx, column=1).value = 'Operating Income Entries'
+        ws.cell(row=row_idx, column=1).font = Font(bold=True)
+        row_idx += 1
+
+        inc_headers = ['Date', 'Details', 'Amount']
+        for col, header in enumerate(inc_headers, 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+        row_idx += 1
+
+        for income in context['operating_income_entries']:
+            ws.cell(row=row_idx, column=1).value = income.income_date.strftime('%Y-%m-%d')
+            ws.cell(row=row_idx, column=2).value = income.details or ''
+            ws.cell(row=row_idx, column=3).value = float(income.amount)
+            row_idx += 1
+
+        row_idx += 1
+        ws.cell(row=row_idx, column=1).value = 'Operating Expense Entries'
+        ws.cell(row=row_idx, column=1).font = Font(bold=True)
+        row_idx += 1
+
+        exp_headers = ['Date', 'Details', 'Amount']
+        for col, header in enumerate(exp_headers, 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.value = header
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+            cell.alignment = Alignment(horizontal='center')
+        row_idx += 1
+
+        for expense in context['operating_expense_entries']:
+            ws.cell(row=row_idx, column=1).value = expense.operation_date.strftime('%Y-%m-%d')
+            ws.cell(row=row_idx, column=2).value = expense.details or ''
+            ws.cell(row=row_idx, column=3).value = float(expense.amount)
             row_idx += 1
 
         response = HttpResponse(

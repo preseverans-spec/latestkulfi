@@ -57,20 +57,31 @@
     </div>
 
     <div class="summary">
-        <div class="summary-item"><div class="label">Quantity Sold</div><div class="value">{{ total_quantity }}</div></div>
+        <div class="summary-item"><div class="label">Total Quantity Sold</div><div class="value">{{ total_quantity }}</div></div>
         <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
         <div class="summary-item"><div class="label">COGS</div><div class="value">Rs.{{ total_cogs|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Operation Cost</div><div class="value">Rs.{{ total_operation_cost|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Operation Income</div><div class="value">Rs.{{ total_operation_income|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Net Profit</div><div class="value">Rs.{{ total_net_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Operation Cost</div><div class="value">Rs.{{ total_operation_cost|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Operation Income</div><div class="value">Rs.{{ total_operation_income|floatformat:2 }}</div></div>
+        <div class="summary-item">
+            <div class="label">Total Net Profit</div>
+            <div class="value">Rs.{{ total_net_profit|floatformat:2 }}</div>
+            <div class="label" style="font-size:10px;color:#888;">(Revenue - COGS) - Op Cost + Op Income</div>
+        </div>
     </div>
 
     <h3 class="section-title">Daily Breakdown</h3>
     <table>
-        <thead><tr><th>Date</th><th>Transactions</th><th>Quantity Sold</th><th>Revenue</th></tr></thead>
+        <thead><tr><th>Date</th><th>Quantity Sold</th><th>Revenue</th><th>COGS</th><th>Operation Cost</th><th>Net Profit</th></tr></thead>
         <tbody>
         {% for day, row in daily_data.items %}
-        <tr><td>{{ day }}</td><td>{{ row.count }}</td><td>{{ row.quantity|floatformat:0 }}</td><td>Rs.{{ row.revenue|floatformat:2 }}</td></tr>
+        <tr>
+            <td>{{ day }}</td>
+            <td>{{ row.quantity|floatformat:0 }}</td>
+            <td>Rs.{{ row.revenue|floatformat:2 }}</td>
+            <td>Rs.{{ row.cogs|floatformat:2 }}</td>
+            <td>Rs.{{ row.operation_cost|floatformat:2 }}</td>
+            <td>Rs.{{ row.net_profit|floatformat:2 }}</td>
+        </tr>
         {% endfor %}
         </tbody>
     </table>

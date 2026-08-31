@@ -93,9 +93,28 @@
         }
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         .navbar, .sidebar, .action-bar, .form-row,
-        .page-title, .no-manufacturer-msg, .no-print { display: none !important; }
+        .page-title, .no-manufacturer-msg, .no-print,
+        .cost-col, .row-total-col { display: none !important; }
         .main-content { padding: 0 !important; }
         .print-header { display: block !important; }
+
+        .order-table tbody tr.empty-row {
+            display: none !important;
+        }
+
+        .order-table tbody {
+            counter-reset: print-sno;
+        }
+        .order-table tbody tr:not(.empty-row) {
+            counter-increment: print-sno;
+        }
+        .order-table tbody tr:not(.empty-row) td:first-child {
+            font-size: 0 !important;
+        }
+        .order-table tbody tr:not(.empty-row) td:first-child::before {
+            content: counter(print-sno);
+            font-size: 10pt;
+        }
     }
 
     /* ── Clean print-preview table (shown in popup window) ── */
@@ -153,6 +172,9 @@
             <i class="fas fa-print"></i> Print / Export
         </button>
         <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" onclick="openPrintWindow(); return false;">
+                <i class="fas fa-print"></i> Print Order
+            </a></li>
             <li><a class="dropdown-item" href="#" onclick="exportPDF(); return false;">
                 <i class="fas fa-file-pdf"></i> Download PDF
             </a></li>
@@ -166,19 +188,24 @@
                 container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
 
                 let rows = '';
-                d.rows.forEach(function(r) {
-                    rows += '<tr>' +
-                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
-                        '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
-                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
-                        '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
-                        '</tr>';
-                });
+                if (d.rows.length === 0) {
+                    rows = '<tr><td colspan="4" style="border:1px solid #333;padding:10px;text-align:center;color:#777;">No products ordered</td></tr>';
+                } else {
+                    d.rows.forEach(function(r) {
+                        rows += '<tr>' +
+                            '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
+                            '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
+                            '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
+                            '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
+                            '</tr>';
+                    });
+                }
 
                 container.innerHTML =
                     '<div style="text-align:center;margin-bottom:10px;">'
                     + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
                     + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+                    + '<div style="font-size:10pt;color:#555;">Manufacturer: ' + (d.mfgLabel || '-') + '</div>'
                     + '<div style="font-size:10pt;color:#555;">Customer location: ' + (d.location || '-') + '</div>'
                     + '</div>'
                     + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'
@@ -327,6 +354,7 @@
         products.forEach(function(p, i) {
             const sno = i + 1;
             const row = document.createElement('tr');
+            row.className = 'empty-row';
             row.innerHTML =
                 '<td>' + sno + '</td>' +
                 '<td class="name-col">' + p.name + '</td>' +
@@ -366,6 +394,14 @@
         const total = qty * cost;
         const qtyEl = document.getElementById('qty_' + i);
         const totEl = document.getElementById('total_' + i);
+        const tr = input.closest('tr');
+        if (tr) {
+            if (lotVal > 0) {
+                tr.classList.remove('empty-row');
+            } else {
+                tr.classList.add('empty-row');
+            }
+        }
         qtyEl.textContent  = (raw === '' || lotVal === 0) ? '' : qty;
         totEl.textContent  = (raw === '' || lotVal === 0) ? '' : '₹' + total.toFixed(2);
     }
@@ -503,7 +539,7 @@
         }).join('');
     }
 
-    /* ── Collect current order rows as plain data ── */
+    /* ── Collect current order rows as plain data (only non-zero entered products) ── */
     function getOrderData() {
         const manufacturer = document.getElementById('manufacturerSelect').value;
         const lotLabel = quantityLabelForManufacturer(manufacturer);
@@ -513,21 +549,30 @@
         const products = getProducts(manufacturer);
 
         const rows = [];
+        let totalLot = 0;
+        let totalQty = 0;
         products.forEach(function(p, i) {
             const input  = document.getElementById('lot_' + i);
-            const lotVal = parseInt(input ? input.value : '') || 0;
+            const raw    = input ? input.value.trim() : '';
+            const lotVal = raw === '' ? 0 : (parseInt(raw) || 0);
             const qty    = lotVal * 6;
-            rows.push({ sno: i + 1, name: p.name, lot: lotVal || '', qty: lotVal ? qty : '' });
+            if (lotVal > 0) {
+                totalLot += lotVal;
+                totalQty += qty;
+                rows.push({
+                    sno: rows.length + 1,
+                    name: p.name,
+                    cost: p.cost,
+                    lot: lotVal,
+                    qty: qty
+                });
+            }
         });
-
-        // Footer totals
-        const totalLotEl = document.getElementById('quantityLabelTotal');
-        const totalQtyEl = document.getElementById('totalQty');
 
         return {
             mfgLabel, lotLabel, date, location, rows,
-            totalLot: totalLotEl ? totalLotEl.textContent : '0',
-            totalQty: totalQtyEl ? totalQtyEl.textContent : '0',
+            totalLot: totalLot,
+            totalQty: totalQty,
         };
     }
 
@@ -537,17 +582,18 @@
     function openPrintWindow() {
         const d = getOrderData();
         let rows = '';
-        d.rows.forEach(function(r) {
-            // Only include products with non-empty and non-zero quantity
-            if (r.qty !== '' && r.qty !== 0 && r.lot !== '' && r.lot !== 0) {
+        if (d.rows.length === 0) {
+            rows = '<tr><td colspan="4" style="text-align:center;padding:12px;color:#777;">No products ordered</td></tr>';
+        } else {
+            d.rows.forEach(function(r) {
                 rows += '<tr>' +
                     '<td>' + r.sno + '</td>' +
                     '<td style="text-align:left;padding-left:12px;">' + r.name + '</td>' +
                     '<td>' + r.lot + '</td>' +
                     '<td>' + r.qty + '</td>' +
                     '</tr>';
-            }
-        });
+            });
+        }
         const html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Stock Order</title>'
             + '<style>'
@@ -565,6 +611,7 @@
             + '<div class="hdr">'
             + '<h2>Stock Order</h2>'
             + '<p>Date: ' + d.date + '</p>'
+            + '<p>Manufacturer: ' + (d.mfgLabel || '-') + '</p>'
             + '<p>Customer location: ' + (d.location || '-') + '</p>'
             + '</div>'
             + '<table>'
@@ -583,25 +630,36 @@
     /* ── Export Excel ── */
     function exportExcel() {
         const d = getOrderData();
-        const wsData = [['S.No.', 'Kulfi Name', d.lotLabel, 'Quantity']];
-        d.rows.forEach(function(r) {
-            wsData.push([r.sno, r.name, r.lot !== '' ? r.lot : 0, r.qty !== '' ? r.qty : 0]);
-        });
+        const wsData = [
+            ['Stock Order'],
+            ['Date:', d.date],
+            ['Manufacturer:', d.mfgLabel || '-'],
+            ['Customer Location:', d.location || '-'],
+            [],
+            ['S.No.', 'Kulfi Name', d.lotLabel, 'Quantity']
+        ];
+        if (d.rows.length === 0) {
+            wsData.push(['-', 'No products ordered', 0, 0]);
+        } else {
+            d.rows.forEach(function(r) {
+                wsData.push([r.sno, r.name, r.lot, r.qty]);
+            });
+        }
         wsData.push(['', 'Total', parseInt(d.totalLot) || 0, parseInt(d.totalQty) || 0]);
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet(wsData);
 
         // Auto-size columns
-        const colWidths = wsData[0].map(function(_, ci) {
+        const colWidths = wsData[5] ? wsData[5].map(function(_, ci) {
             return { wch: Math.max.apply(null, wsData.map(function(row) {
                 return row[ci] ? String(row[ci]).length + 2 : 8;
             })) };
-        });
+        }) : [];
         ws['!cols'] = colWidths;
 
         XLSX.utils.book_append_sheet(wb, ws, 'Stock Order');
-        XLSX.writeFile(wb, 'StockOrder_' + d.mfgLabel.replace(/\s+/g, '_') + '_' + d.date + '.xlsx');
+        XLSX.writeFile(wb, 'StockOrder_' + (d.mfgLabel ? d.mfgLabel.replace(/\s+/g, '_') : 'Order') + '_' + d.date + '.xlsx');
     }
 
     /* ── Export Image (PNG) via html2canvas ── */
@@ -613,19 +671,24 @@
         container.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff;padding:16px;font-family:Arial,sans-serif;';
 
         let rows = '';
-        d.rows.forEach(function(r) {
-            rows += '<tr>' +
-                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
-                '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
-                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.lot !== '' ? r.lot : '') + '</td>' +
-                '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + (r.qty !== '' ? r.qty : '') + '</td>' +
-                '</tr>';
-        });
+        if (d.rows.length === 0) {
+            rows = '<tr><td colspan="4" style="border:1px solid #333;padding:10px;text-align:center;color:#777;">No products ordered</td></tr>';
+        } else {
+            d.rows.forEach(function(r) {
+                rows += '<tr>' +
+                    '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.sno + '</td>' +
+                    '<td style="border:1px solid #333;padding:5px 12px;text-align:left;">' + r.name + '</td>' +
+                    '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.lot + '</td>' +
+                    '<td style="border:1px solid #333;padding:5px 10px;text-align:center;">' + r.qty + '</td>' +
+                    '</tr>';
+            });
+        }
 
         container.innerHTML =
             '<div style="text-align:center;margin-bottom:10px;">'
             + '<div style="font-size:15pt;font-weight:700;color:#572809;">Stock Order</div>'
             + '<div style="font-size:10pt;color:#555;">Date: ' + d.date + '</div>'
+            + '<div style="font-size:10pt;color:#555;">Manufacturer: ' + (d.mfgLabel || '-') + '</div>'
             + '<div style="font-size:10pt;color:#555;">Customer location: ' + (d.location || '-') + '</div>'
             + '</div>'
             + '<table style="border-collapse:collapse;width:100%;table-layout:auto;">'

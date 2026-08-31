@@ -54,14 +54,27 @@
         <p>Date: {{ selected_date|date:'l, F j, Y' }} | Generated on {{ now|date:'Y-m-d H:i' }}</p>
     </div>
 
+    <div style="display: flex; gap: 10px; margin-bottom: 12px; text-align: center;">
+        <div style="flex: 1; background: #e8f8f5; border: 1px solid #a3e4d7; padding: 8px; border-radius: 4px;">
+            <strong>Current Stock Taken for {{ selected_date|date:'Y-m-d' }}:</strong> {{ total_combined_stock_taken }}
+        </div>
+        <div style="flex: 1; background: #eaf2f8; border: 1px solid #a9cce3; padding: 8px; border-radius: 4px;">
+            <strong>Total Stock as of {{ selected_date|date:'Y-m-d' }}:</strong> {{ total_stock }}
+        </div>
+    </div>
+
     <div class="summary">
-        <div class="summary-item"><div class="label">Quantity Sold</div><div class="value">{{ total_quantity|floatformat:0 }}</div></div>
-        <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">COGS</div><div class="value">Rs.{{ total_cogs|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Quantity Sold</div><div class="value">{{ total_quantity|floatformat:0 }}</div></div>
+        <div class="summary-item"><div class="label">Total Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total COGS</div><div class="value">Rs.{{ total_cogs|floatformat:2 }}</div></div>
         <div class="summary-item"><div class="label">Operation Cost</div><div class="value">Rs.{{ total_operation_cost|floatformat:2 }}</div></div>
         <div class="summary-item"><div class="label">Operation Income</div><div class="value">Rs.{{ total_operation_income|floatformat:2 }}</div></div>
         <div class="summary-item"><div class="label">Revenue - Op Cost</div><div class="value">Rs.{{ revenue_minus_operation_cost|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Net Profit</div><div class="value">Rs.{{ net_profit|floatformat:2 }}</div></div>
+        <div class="summary-item">
+            <div class="label">Net Profit</div>
+            <div class="value">Rs.{{ net_profit|floatformat:2 }}</div>
+            <div class="label" style="font-size:10px;color:#888;">(Revenue - COGS) - Op Cost + Op Income</div>
+        </div>
     </div>
 
     <table>

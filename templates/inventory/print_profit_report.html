@@ -53,9 +53,11 @@
     </div>
 
     <div class="summary">
-        <div class="summary-item"><div class="label">Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Cost</div><div class="value">Rs.{{ total_cost|floatformat:2 }}</div></div>
-        <div class="summary-item"><div class="label">Profit</div><div class="value">Rs.{{ total_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Quantity Sold</div><div class="value">{{ total_quantity }}</div></div>
+        <div class="summary-item"><div class="label">Total Revenue</div><div class="value">Rs.{{ total_revenue|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Cost</div><div class="value">Rs.{{ total_cost|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Total Profit</div><div class="value">Rs.{{ total_profit|floatformat:2 }}</div></div>
+        <div class="summary-item"><div class="label">Profit Margin</div><div class="value">{{ profit_margin|floatformat:2 }}%</div></div>
     </div>
 
     <table>
