@@ -1064,6 +1064,99 @@ class ViewSalesDeleteTests(TestCase):
 		self.product.refresh_from_db()
 		self.assertEqual(self.product.current_stock, 5)
 
+	def test_delete_sales_for_date_with_salesperson_only_deletes_that_salesperson_sales(self):
+		salesperson1 = User.objects.create_user(
+			username='salesperson-1',
+			password='pass12345',
+			first_name='Alice',
+		)
+		salesperson2 = User.objects.create_user(
+			username='salesperson-2',
+			password='pass12345',
+			first_name='Bob',
+		)
+
+		sale_sp1 = Sales.objects.create(
+			product=self.product,
+			quantity=3,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=salesperson1,
+		)
+		sale_sp2 = Sales.objects.create(
+			product=self.product,
+			quantity=5,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=salesperson2,
+		)
+
+		self.client.force_login(self.admin_user)
+		response = self.client.post(
+			reverse('delete_sales_for_date'),
+			{
+				'selected_date': '2026-04-15',
+				'selected_salesperson_id': str(salesperson1.id),
+			},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		self.assertRedirects(response, f"{reverse('view_sales')}?date=2026-04-15&salesperson={salesperson1.id}")
+
+		# Sales for salesperson1 must be deleted
+		self.assertFalse(Sales.objects.filter(id=sale_sp1.id).exists())
+		# Sales for salesperson2 must remain intact
+		self.assertTrue(Sales.objects.filter(id=sale_sp2.id).exists())
+		self.assertEqual(Sales.objects.filter(sale_date='2026-04-15').count(), 1)
+
+	def test_delete_grouped_sale_with_salesperson_only_deletes_that_salesperson_sales(self):
+		salesperson1 = User.objects.create_user(
+			username='salesperson-g1',
+			password='pass12345',
+			first_name='Charlie',
+		)
+		salesperson2 = User.objects.create_user(
+			username='salesperson-g2',
+			password='pass12345',
+			first_name='David',
+		)
+
+		sale_sp1 = Sales.objects.create(
+			product=self.product,
+			quantity=4,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=salesperson1,
+		)
+		sale_sp2 = Sales.objects.create(
+			product=self.product,
+			quantity=6,
+			unit_price=Decimal('20.00'),
+			sale_date='2026-04-15',
+			recorded_by=salesperson2,
+		)
+
+		self.client.force_login(self.admin_user)
+		response = self.client.post(
+			reverse('delete_grouped_sale'),
+			{
+				'selected_date': '2026-04-15',
+				'product_name': self.product.name,
+				'selected_salesperson_id': str(salesperson1.id),
+			},
+		)
+
+		self.assertEqual(response.status_code, 302)
+		self.assertRedirects(
+			response,
+			f"{reverse('view_sales')}?date=2026-04-15&salesperson={salesperson1.id}&restored_units=4&restored_product=Malai+Kulfi"
+		)
+
+		# Sales for salesperson1 must be deleted
+		self.assertFalse(Sales.objects.filter(id=sale_sp1.id).exists())
+		# Sales for salesperson2 must remain intact
+		self.assertTrue(Sales.objects.filter(id=sale_sp2.id).exists())
+
 
 class QuickIncomeEntryTests(TestCase):
 	def setUp(self):

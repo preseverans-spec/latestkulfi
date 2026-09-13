@@ -4,6 +4,7 @@ Django settings for kulfi project.
 
 from pathlib import Path
 import os
+import sys
 from urllib.parse import urlparse
 import dj_database_url
 from django.core.management.utils import get_random_secret_key
@@ -106,7 +107,14 @@ WSGI_APPLICATION = 'kulfi_config.wsgi.application'
 
 # Database
 DATABASE_URL = os.getenv('DATABASE_URL')
-if DATABASE_URL:
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+elif DATABASE_URL:
     parsed_db_url = urlparse(DATABASE_URL)
     db_host = (parsed_db_url.hostname or '').strip().lower()
     local_db_hosts = {'localhost', '127.0.0.1', '::1'}
